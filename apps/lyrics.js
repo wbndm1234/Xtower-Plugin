@@ -126,7 +126,7 @@ export class LyricsPlugin extends plugin {
             COMMON_LYRICS_DIR
     }
 
-    // 高性能随机歌词获取
+    // 随机歌词获取
     #getRandomLyric(targetDir, isRiv) {
         try {
             // 自动刷新缓存（30分钟有效期）
@@ -215,6 +215,10 @@ export class LyricsPlugin extends plugin {
     }
     // ================= 管理功能 =================
     async addRepo(e) {
+        if (!e.isMaster) {
+            e.reply("无权限");
+            return false;
+        }
         const match = e.msg.match(/^添加歌词仓库\s+(.+)\s+(.+)$/)
         if (!match) return await e.reply('[随机歌词]格式错误！正确格式：添加歌词仓库 名称 仓库URL')
         const [_, name, url] = match
@@ -237,6 +241,10 @@ export class LyricsPlugin extends plugin {
     }
 
     async updateCommon(e) {
+        if (!e.isMaster) {
+            e.reply("无权限");
+            return false;
+        }
         const repoName = e.msg.split(' ')[1]
         const repoUrl = this.config.repositories[repoName]
         
@@ -372,6 +380,10 @@ export class LyricsPlugin extends plugin {
     }
 
     async createLib(e) {
+        if (!e.isMaster) {
+            e.reply("无权限");
+            return false;
+        }
         const libName = e.msg.split(' ')[1]?.trim()
         if (!libName) return await e.reply('[随机歌词]要给歌词库起个名字')
 
@@ -397,6 +409,10 @@ export class LyricsPlugin extends plugin {
     }
 
     async linkGroup(e) {
+        if (!e.isMaster) {
+            e.reply("无权限");
+            return false;
+        }
         const match = e.msg.match(/^关联群组\s+(\\d+)\\s+(.+)$/)
         if (!match) return await e.reply('[随机歌词]格式不对哦～示范：【关联群组 群号 歌词库名】')
         
@@ -411,6 +427,10 @@ export class LyricsPlugin extends plugin {
     }
 
     async fetchFromRepo(e) {
+        if (!e.isMaster) {
+            e.reply("无权限");
+            return false;
+        }
         const match = e.msg.match(/^获取歌词\s+(.+?)\\s+(.+)$/)
         if (!match) return await e.reply('📌 格式：获取歌词 库名 仓库名')
         
@@ -431,6 +451,10 @@ export class LyricsPlugin extends plugin {
     }
 
     async listLibs(e) {
+        if (!e.isMaster) {
+            e.reply("无权限");
+            return false;
+        }
         const libs = Object.keys(this.config.libraries)
         await e.reply(libs.length 
             ? `[随机歌词] 现有歌词库：\n${libs.join('\n')}` 
@@ -439,6 +463,10 @@ export class LyricsPlugin extends plugin {
     }
 
     async listRepos(e) {
+        if (!e.isMaster) {
+            e.reply("无权限");
+            return false;
+        }
         const entries = Object.entries(this.config.repositories)
         await e.reply(entries.length 
             ? `[随机歌词]云端仓库列表：\n${
@@ -451,6 +479,10 @@ export class LyricsPlugin extends plugin {
     }
 
     async removeLib(e) {
+        if (!e.isMaster) {
+            e.reply("无权限");
+            return false;
+        }
         const libName = e.msg.split(' ')[1]
         if (!libName) return await e.reply('[随机歌词]删除哪个库呢')
         
@@ -469,6 +501,10 @@ export class LyricsPlugin extends plugin {
     }
 
     async removeRepo(e) {
+        if (!e.isMaster) {
+            e.reply("无权限");
+            return false;
+        }
         const repoName = e.msg.split(' ')[1]?.trim()
         if (!repoName) return await e.reply('[随机歌词]请指定要删除的仓库名称')
     
@@ -531,6 +567,10 @@ export class LyricsPlugin extends plugin {
     }
 
     async setRateLimit(e) {
+        if (!e.isMaster) {
+            e.reply("无权限");
+            return false;
+        }
         const match = e.msg.match(/^设置频率限制\s+(\\d+)\\s+(\\d+)$/)
         if (!match) return await e.reply('⏳ 格式：设置频率限制 次数 冷却秒数')
         
