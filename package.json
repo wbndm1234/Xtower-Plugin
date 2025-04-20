@@ -1,0 +1,8 @@
+{
+    "dependencies": {
+      "fs-extra": "^11.2.0",
+      "glob": "^10.3.10",
+      "execa": "^8.0.1",
+      "node-fetch": "^3.3.2"
+    }
+  }
