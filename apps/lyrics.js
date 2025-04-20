@@ -6,9 +6,26 @@ import { glob } from 'glob';
 
 // ================= 核心配置 =================
 // 修改数据存储路径到plugin/data
-const CONFIG_PATH = path.join(process.cwd(),  'data', 'lyrics', 'config.json')
-const COMMON_LYRICS_DIR = path.join(process.cwd(),  'data', 'lyrics', 'common_lyrics')
-const TEMP_DIR = path.join(process.cwd(),  'data', 'temp')
+const LYRIC_ROOT = path.join(process.cwd(), 'plugins', 'Xtower-Plugin', 'data', 'lyrics')
+const CONFIG_PATH = path.join(LYRIC_ROOT, 'config.json')
+const COMMON_LYRICS_DIR = path.join(LYRIC_ROOT, 'common_lyrics')
+const TEMP_DIR = path.join(process.cwd(), 'plugins', 'Xtower-Plugin', 'data', 'temp')
+
+// 确保目录存在
+[LYRIC_ROOT, COMMON_LYRICS_DIR, TEMP_DIR].forEach(dir => {
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true })
+    }
+})
+
+
+import { fileURLToPath } from 'url'
+import { dirname } from 'path'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+
+// 使用统一路径定义
 
 // 默认配置模板
 const DEFAULT_CONFIG = {
@@ -70,40 +87,38 @@ export class LyricsPlugin extends plugin {
 
     // 带数据迁移的配置加载
     #loadConfigWithMigration() {
-        // 定义 legacyPaths 为常量
         const legacyPaths = {
-            libraries: path.join(process.cwd(), 'data', 'resource', 'lyrics', 'libraries.json'),
-            repositories: path.join(process.cwd(), 'data', 'resource', 'lyrics', 'repositories.json'),
-            groupMapping: path.join(process.cwd(), 'data', 'resource', 'lyrics', 'groupLyricsMapping.json')
+            libraries: path.join(LYRIC_ROOT, 'libraries.json'),
+            repositories: path.join(LYRIC_ROOT, 'repositories.json'),
+            groupMapping: path.join(LYRIC_ROOT, 'groupLyricsMapping.json')
         }
-    
+      
         // 如果已有新配置直接加载
         if (fs.existsSync(CONFIG_PATH)) {
-            try {
-                return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'))
-            } catch (e) {
-                logger.error('[随机歌词] 配置文件解析失败，使用默认配置:', e)
-                return { ...DEFAULT_CONFIG }
-            }
+          try {
+            return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'))
+          } catch (e) {
+            this.logger.error('[随机歌词] 配置文件解析失败，使用默认配置:', e)
+            return { ...DEFAULT_CONFIG }
+          }
         }
-    
+      
         // 迁移旧配置文件
         const migrated = { ...DEFAULT_CONFIG }
         Object.entries(legacyPaths).forEach(([key, filePath]) => {
-            if (fs.existsSync(filePath)) {
-                try {
-                    migrated[key] = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
-                    fs.unlinkSync(filePath) // 迁移后删除旧文件
-                } catch (e) {
-                    logger.error(`[随机歌词] 迁移 ${key} 配置失败:`, e)
-                }
+          if (fs.existsSync(filePath)) {
+            try {
+              migrated[key] = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+              fs.renameSync(filePath, `${filePath}.bak`) // 备份而非删除
+            } catch (e) {
+              this.logger.error(`[随机歌词] 迁移 ${key} 配置失败:`, e)
             }
+          }
         })
-    
-        // 保存新配置
+      
         this.#saveConfig(migrated)
         return migrated
-    }
+      }
 
     // 防抖保存配置
     #saveConfig(data) {
@@ -410,7 +425,7 @@ export class LyricsPlugin extends plugin {
         }
 
         // 修改为新的资源路径
-        const libPath = path.join(process.cwd(), 'data', 'lyrics', libName)
+        const libPath = path.join(LYRIC_ROOT, libName)
         
         try {
             if (fs.existsSync(libPath)) {
@@ -613,7 +628,7 @@ export class LyricsPlugin extends plugin {
         if (!fs.existsSync(targetDir)) return
 
         // 更新安全路径检查
-        const safeBase = path.join(process.cwd(),  'data', 'lyrics')
+        const safeBase = LYRIC_ROOT
         const relativePath = path.relative(safeBase, targetDir)
         
         if (relativePath.includes('..') || !targetDir.startsWith(safeBase)) {
