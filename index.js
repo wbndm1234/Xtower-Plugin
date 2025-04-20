@@ -1,44 +1,24 @@
-import fs from 'fs'
-import path from 'path'
-import { fileURLToPath } from 'url'
+import fs from 'node:fs'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const files = fs.readdirSync('./plugins/Xtower-Plugin/apps').filter(file => file.endsWith('.js'))
 
-// 安全加载函数
-async function safeImport(modulePath) {
-    try {
-        // 添加时间戳防止缓存
-        return await import(`${modulePath}?t=${Date.now()}`)
-    } catch (err) {
-        console.error(`加载模块 ${modulePath} 失败:`, err)
-        return null
-    }
+let ret = []
+
+files.forEach((file) => {
+  ret.push(import(`./apps/${file}`))
+})
+
+ret = await Promise.allSettled(ret)
+
+let apps = {}
+for (let i in files) {
+  let name = files[i].replace('.js', '')
+
+  if (ret[i].status != 'fulfilled') {
+    logger.error(`载入插件错误：${logger.red(name)}`)
+    logger.error(ret[i].reason)
+    continue
+  }
+  apps[name] = ret[i].value[Object.keys(ret[i].value)[0]]
 }
-
-// 加载所有插件
-export async function loadApps() {
-    const appsDir = path.join(__dirname, 'apps')
-    const apps = {}
-    
-    try {
-        const files = fs.readdirSync(appsDir)
-            .filter(file => file.endsWith('.js'))
-            .filter(file => !file.startsWith('_'))
-
-        for (const file of files) {
-            const name = path.basename(file, '.js')
-            const module = await safeImport(`./apps/${file}`)
-            
-            if (module) {
-                apps[name] = module.default || module
-                console.log(`成功加载模块: ${name}`)
-            }
-        }
-    } catch (err) {
-        console.error('加载插件时出错:', err)
-    }
-
-    return apps
-}
-
-export const apps = await loadApps()
+export { apps }

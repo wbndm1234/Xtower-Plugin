@@ -4,19 +4,24 @@ import fse from 'fs-extra';
 import common from '../../../lib/common/common.js';
 import { glob } from 'glob'; 
 
-// ================= 核心配置 =================
-// 修改数据存储路径到plugin/data
-const LYRIC_ROOT = path.join(process.cwd(), 'plugins', 'Xtower-Plugin', 'data', 'lyrics')
-const CONFIG_PATH = path.join(LYRIC_ROOT, 'config.json')
-const COMMON_LYRICS_DIR = path.join(LYRIC_ROOT, 'common_lyrics')
-const TEMP_DIR = path.join(process.cwd(), 'plugins', 'Xtower-Plugin', 'data', 'temp')
+// ================= 配置 =================
+// 定义常量
+const LYRIC_ROOT = path.join(process.cwd(), 'plugins', 'Xtower-Plugin', 'data', 'lyrics');
+const COMMON_LYRICS_DIR = path.join(LYRIC_ROOT, 'common_lyrics');
+const TEMP_DIR = path.join(process.cwd(), 'plugins', 'Xtower-Plugin', 'data', 'temp');
+const CONFIG_PATH = path.join(LYRIC_ROOT, 'config.json');
 
 // 确保目录存在
-[LYRIC_ROOT, COMMON_LYRICS_DIR, TEMP_DIR].forEach(dir => {
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true })
-    }
-})
+function ensureDirectoriesExist(directories) {
+    directories.forEach(dir => {
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+    });
+}
+
+// 调用函数确保目录存在
+ensureDirectoriesExist([LYRIC_ROOT, COMMON_LYRICS_DIR, TEMP_DIR]);
 
 
 import { fileURLToPath } from 'url'

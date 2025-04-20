@@ -8,10 +8,9 @@ const crypto = require('crypto')
 // 数据管理类
 class DailyData {
   constructor() {
-    // 修改数据存储路径到plugin/resource
+    // 修改数据存储路径到 plugin/resource
     this.dataDir = path.join(process.cwd(), 'data', 'bingo')
     this.initDataDir()
-    
     // 内存数据结构优化
     this.state = {
       date: '',
@@ -73,7 +72,9 @@ class DailyData {
         // 转换格式: {日期 -> [{userId, name, timestamp}]}
         const rankingMap = new Map()
         for (const [date, users] of Object.entries(raw)) {
-          rankingMap.set(date, users)
+          rankingMap.set(date, users.filter(user =>
+            user.userId && user.name && typeof user.timestamp === 'number'
+          ))
         }
         this.state.ranking = rankingMap
       }
@@ -89,7 +90,6 @@ class DailyData {
       this.state.date = today
       this.state.correctUsers.clear()
     }
-
     // 加载当天的用户数据
     const dailyFile = path.join(this.dataDir, `${today}.users.json`)
     if (fs.existsSync(dailyFile)) {
@@ -108,13 +108,10 @@ class DailyData {
     if (this.resetTimer) {
       clearInterval(this.resetTimer)
     }
-    
     this.resetTimer = setInterval(() => {
       const today = this.getToday()
       if (this.state.date === today) return
-      
       this.persistDailyData(this.state.date)
-      
       this.state.date = today
       this.state.correctUsers.clear()
       console.log(`[Bingo] 已重置每日统计 ${today}`)
@@ -127,22 +124,23 @@ class DailyData {
       console.log('[Bingo] 数据正在写入中，跳过本次写入')
       return
     }
-    
     this.writeLock = true
     try {
       if (!date) return
-    
       // 保存正确用户（带时间戳和名称）
       const userFile = path.join(this.dataDir, `${date}.users.json`)
       const userData = {
-        users: [...this.state.correctUsers.values()]
+        users: [...this.state.correctUsers.values()].map(user => ({
+          userId: user.userId,
+          name: user.name || '未知用户',
+          timestamp: user.timestamp
+        }))
       }
       fs.writeFileSync(userFile, JSON.stringify(userData), 'utf-8')
-
       // 按时间戳排序存储
       const rankingData = [...this.state.correctUsers.values()]
+        .filter(user => user.userId && user.name && typeof user.timestamp === 'number')
         .sort((a, b) => a.timestamp - b.timestamp)
-    
       this.state.ranking.set(date, rankingData)
       this.saveRankingData()
     } finally {
@@ -236,18 +234,15 @@ export class BingoPlugin extends plugin {
     try {
       const { image } = this.getTodayDataPath()
       const today = dataManager.getToday()
-
       const imageUrl = `${image}?t=${Date.now()}`
       const imageResponse = await fetch(imageUrl)
       if (!imageResponse.ok) throw new Error('图片未找到')
       const imageBuffer = await imageResponse.arrayBuffer()
       const imageHash = this.generateHash(Buffer.from(imageBuffer))
-
       const solutionUrl = `${this.getTodayDataPath().solution}?t=${Date.now()}`
       const solutions = await this.fetchSolutions(solutionUrl)
       if (!solutions) throw new Error('答案数据未找到')
       const answerHash = this.generateHash(JSON.stringify(solutions))
-
       if (dataManager.state.hashData.date !== today) {
         dataManager.state.hashData = {
           date: today,
@@ -256,19 +251,17 @@ export class BingoPlugin extends plugin {
         }
         dataManager.state.correctUsers.clear()
       }
-
       const isImageMatch = dataManager.state.hashData.imageHash === imageHash
       const isAnswerMatch = dataManager.state.hashData.answerHash === answerHash
-
       if (isImageMatch && isAnswerMatch) {
         return await this.reply([
           {
             type: 'image',
             file: image
           },
-          `今日已有 ${dataManager.state.correctUsers.size} 人作答正确\n`,
-          '提交格式为#bingo xx xx，xx的第1个数代表行，第2个数代表列\n。',
-          '使用了聪明bingo游戏的规则，在此标注'
+          `今日已有 ${dataManager.state.correctUsers.size} 人作答正确`,
+          '\n提交格式为#bingo xx xx，xx的第1个数代表行，第2个数代表列,比如 13 代表第一行第三列。',
+          '\n使用了聪明bingo游戏的规则，在此标注'
         ])
       } else if (isImageMatch || isAnswerMatch) {
         return await this.reply('题目正在生成中，要不等等看？')
@@ -279,21 +272,19 @@ export class BingoPlugin extends plugin {
           answerHash
         }
         dataManager.state.correctUsers.clear()
-
         fs.writeFileSync(
           path.join(dataManager.dataDir, 'hashData.json'),
           JSON.stringify(dataManager.state.hashData, null, 2)
         )
-
         return await this.reply([
           {
             type: 'image',
             file: image
           },
-          `今日已有 ${dataManager.state.correctUsers.size} 人作答正确\n`,
-          '（题目已更新）\n',
-          '提交格式为#bingo xx xx，xx的第1个数代表行，第2个数代表列。\n',
-          '使用了聪明bingo游戏的规则，在此标注'
+          `今日已有 ${dataManager.state.correctUsers.size} 人作答正确`,
+          '\n（题目已更新）',
+          '\n提交格式为#bingo xx xx，xx的第1个数代表行，第2个数代表列,比如 13 代表第一行第三列。',
+          '\n使用了聪明bingo游戏的规则，在此标注'
         ])
       }
     } catch (e) {
@@ -305,13 +296,11 @@ export class BingoPlugin extends plugin {
   parseInput(input) {
     const coords = new Set()
     const matches = input.matchAll(/([1-5])([1-5])/g)
-    
     for (const match of matches) {
       const row = parseInt(match[1]) - 1
       const col = parseInt(match[2]) - 1
       coords.add(`${row},${col}`)
     }
-    
     return coords.size > 0 ? coords : null
   }
 
@@ -319,20 +308,16 @@ export class BingoPlugin extends plugin {
     const userId = this.e.user_id
     const userName = this.e.sender.card || this.e.sender.nickname
     const input = this.e.msg
-  
     try {
       const userCoords = this.parseInput(input)
       if (!userCoords) {
         return await this.reply('坐标格式错误，栗子（例子）：#bingo 11 23 35')
       }
-  
       const { solution } = this.getTodayDataPath()
       const solutions = await this.fetchSolutions(solution)
-  
       if (!solutions || solutions.length === 0) {
         return await this.reply('今日题目数据尚未生成，等等看')
       }
-  
       const solutionHashes = solutions.map(grid => {
         const cells = grid.flatMap((row, x) =>
           row.filter(cell => cell.checked)
@@ -340,33 +325,30 @@ export class BingoPlugin extends plugin {
         )
         return new Set(cells)
       })
-  
       const userHash = new Set([...userCoords])
-  
       const isValid = solutionHashes.some(solutionHash =>
         solutionHash.size === userHash.size &&
         [...solutionHash].every(coord => userHash.has(coord))
       )
-  
       if (isValid) {
         if (!dataManager.state.correctUsers.has(userId)) {
           // 记录用户信息和提交时间
           dataManager.state.correctUsers.set(userId, {
             userId,
-            name: userName,
+            name: userName || '未知用户',
             timestamp: Date.now()
           })
           dataManager.persistDailyData(dataManager.getToday())
           await this.reply([
             `🎉 作答正确！`,
-            `你是今日第${dataManager.state.correctUsers.size}位回答正确者呢(￣▽￣)*`
+            `\n你是今日第${dataManager.state.correctUsers.size}位回答正确者呢(￣▽￣)*`
           ])
         } else {
           const ranking = this.getUserRanking(userId)
           const userData = dataManager.state.correctUsers.get(userId)
-          const timeStr = new Date(userData.timestamp).toLocaleTimeString()
+          const timeStr = this.formatTime(userData.timestamp)
           await this.reply([
-            `你已经提交过答案了呢，\n`,
+            `你已经提交过答案了呢awa`,
             `你今日的排名是第${ranking}位，提交时间: ${timeStr}`
           ])
         }
@@ -390,7 +372,11 @@ export class BingoPlugin extends plugin {
   // 格式化时间
   formatTime(timestamp) {
     const date = new Date(timestamp)
-    return `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`
+    const hours = date.getHours().toString().padStart(2, '0')
+    const minutes = date.getMinutes().toString().padStart(2, '0')
+    const seconds = date.getSeconds().toString().padStart(2, '0')
+    const milliseconds = date.getMilliseconds().toString().padStart(3, '0')
+    return `${hours}:${minutes}:${seconds}.${milliseconds}`
   }
 
   async queryRanking() {
@@ -398,32 +384,31 @@ export class BingoPlugin extends plugin {
     const userName = this.e.sender.card || this.e.sender.nickname
     const today = dataManager.getToday()
     const rankingData = dataManager.state.ranking.get(today) || []
-
-    // 获取用户自己的排名信息
-    const userIndex = rankingData.findIndex(u => u.userId === userId)
-    const userRanking = userIndex === -1 ? -1 : userIndex + 1
-
+    
     // 获取前三名信息
-    let top3Msg = ''
+    let top3Msg = '🏆 今日前三名:\n'
     if (rankingData.length > 0) {
-      top3Msg = '🏆 今日前三名:\n'
       const top3 = rankingData.slice(0, 3)
       top3.forEach((user, index) => {
-        top3Msg += `${index + 1}. ${user.name} (${this.formatTime(user.timestamp)})\n`
+        top3Msg += `${index + 1}. ${user.name || '未知用户'} (${this.formatTime(user.timestamp)})\n`
       })
+    } else {
+      top3Msg += '暂无排名数据~\n'
     }
-
-    if (userRanking !== -1) {
+  
+    // 获取用户自己的排名信息
+    const userIndex = rankingData.findIndex(u => u.userId === userId)
+    if (userIndex !== -1) {
       const userData = rankingData[userIndex]
       await this.reply([
         top3Msg,
-        `\n你的排名: 第${userRanking}位`,
-        `提交时间: ${this.formatTime(userData.timestamp)}`
+        `\n你的排名: 第${userIndex + 1}位`,
+        `\n提交时间: ${this.formatTime(userData.timestamp)}`
       ])
     } else {
       await this.reply([
         top3Msg,
-        `\n${userName}，你今日尚未提交答案呢(￣▽￣)`
+        `\n${userName || '未知用户'}，你今日尚未提交答案呢(￣▽￣)`
       ])
     }
   }
