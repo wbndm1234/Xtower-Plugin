@@ -30,18 +30,18 @@ export class LyricsPlugin extends plugin {
             event: 'message',
             priority: 0,
             rule: [
-                { reg: '^抽歌词\\s*(-riv)?$', fnc: 'drawLyrics' },
-                { reg: '^抽歌词\\s+(\\d+)\\s*(-riv)?$', fnc: 'batchDraw' },
-                { reg: '^获取歌词\\s+(.+?)\\s+(.+)$', fnc: 'fetchFromRepo' },
-                { reg: '^新建歌词仓库\\s+(.+)\\s+(.+)$', fnc: 'addRepo' },
-                { reg: '^删除歌词仓库\\s+(.+)$', fnc: 'removeRepo' },
-                { reg: '^新建歌词库\\s+(.+)$', fnc: 'createLib' },
-                { reg: '^删除歌词库\\s+(.+)$', fnc: 'removeLib' },
-                { reg: '^关联群组\\s+(\\d+)\\s+(.+)$', fnc: 'linkGroup' },
-                { reg: '^歌词库列表$', fnc: 'listLibs' },
-                { reg: '^仓库列表$', fnc: 'listRepos' },
-                { reg: '^设置频率限制\\s+(\\d+)\\s+(\\d+)$', fnc: 'setRateLimit' },
-                { reg: '^更新公用库\\s+(.+)$', fnc: 'updateCommon' }
+                { reg: '^#抽歌词\\s*(-riv)?$', fnc: 'drawLyrics' },
+                { reg: '^#抽歌词\\s+(\\d+)\\s*(-riv)?$', fnc: 'batchDraw' },
+                { reg: '^#获取歌词\\s+(.+?)\\s+(.+)$', fnc: 'fetchFromRepo' },
+                { reg: '^#新建歌词仓库\\s+(.+)\\s+(.+)$', fnc: 'addRepo' },
+                { reg: '^#删除歌词仓库\\s+(.+)$', fnc: 'removeRepo' },
+                { reg: '^#新建歌词库\\s+(.+)$', fnc: 'createLib' },
+                { reg: '^#删除歌词库\\s+(.+)$', fnc: 'removeLib' },
+                { reg: '^#关联群组\\s+(\\d+)\\s+(.+)$', fnc: 'linkGroup' },
+                { reg: '^#歌词库列表$', fnc: 'listLibs' },
+                { reg: '^#仓库列表$', fnc: 'listRepos' },
+                { reg: '^#设置频率限制\\s+(\\d+)\\s+(\\d+)$', fnc: 'setRateLimit' },
+                { reg: '^#更新公用库\\s+(.+)$', fnc: 'updateCommon' }
             ]
         })
 
