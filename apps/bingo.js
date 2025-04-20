@@ -89,6 +89,10 @@ class DailyData {
     if (this.state.date !== today) {
       this.state.date = today
       this.state.correctUsers.clear()
+      // 清空当天的排名数据
+      if (this.state.ranking.has(today)) {
+        this.state.ranking.delete(today)
+      }
     }
     // 加载当天的用户数据
     const dailyFile = path.join(this.dataDir, `${today}.users.json`)
@@ -103,7 +107,7 @@ class DailyData {
     }
   }
 
-  // 每日重置逻辑优化
+  // 每日重置逻辑
   startDailyReset() {
     if (this.resetTimer) {
       clearInterval(this.resetTimer)
@@ -114,6 +118,11 @@ class DailyData {
       this.persistDailyData(this.state.date)
       this.state.date = today
       this.state.correctUsers.clear()
+      // 清空当天的排名数据
+      if (this.state.ranking.has(today)) {
+        this.state.ranking.delete(today)
+        this.saveRankingData()
+      }
       console.log(`[Bingo] 已重置每日统计 ${today}`)
     }, 1000 * 60 * 60 * 24)
   }
@@ -250,6 +259,10 @@ export class BingoPlugin extends plugin {
           answerHash: ''
         }
         dataManager.state.correctUsers.clear()
+        // 清空当天的排名数据
+        if (dataManager.state.ranking.has(today)) {
+          dataManager.state.ranking.delete(today)
+        }
       }
       const isImageMatch = dataManager.state.hashData.imageHash === imageHash
       const isAnswerMatch = dataManager.state.hashData.answerHash === answerHash
