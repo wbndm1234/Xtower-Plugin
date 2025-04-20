@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import fse from 'fs-extra';
-import common from '../../lib/common/common.js';
+import common from '../../../lib/common/common.js';
 import { glob } from 'glob'; 
 
 // ================= 核心配置 =================

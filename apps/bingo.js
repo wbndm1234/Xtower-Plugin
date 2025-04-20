@@ -1,4 +1,4 @@
-import plugin from '../../lib/plugins/plugin.js'
+import plugin from '../../../lib/plugins/plugin.js'
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
 const path = require('path')
