@@ -70,19 +70,37 @@ export class LyricsPlugin extends plugin {
 
     // 带数据迁移的配置加载
     #loadConfigWithMigration() {
-        // 新配置直接加载
-        if (fs.existsSync(CONFIG_PATH)) {
-            return JSON.parse(fs.readFileSync(CONFIG_PATH))
+        // 定义 legacyPaths 为常量
+        const legacyPaths = {
+            libraries: path.join(process.cwd(), 'data', 'resource', 'lyrics', 'libraries.json'),
+            repositories: path.join(process.cwd(), 'data', 'resource', 'lyrics', 'repositories.json'),
+            groupMapping: path.join(process.cwd(), 'data', 'resource', 'lyrics', 'groupLyricsMapping.json')
         }
-
-        const migrated = {...DEFAULT_CONFIG}
+    
+        // 如果已有新配置直接加载
+        if (fs.existsSync(CONFIG_PATH)) {
+            try {
+                return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'))
+            } catch (e) {
+                logger.error('[随机歌词] 配置文件解析失败，使用默认配置:', e)
+                return { ...DEFAULT_CONFIG }
+            }
+        }
+    
+        // 迁移旧配置文件
+        const migrated = { ...DEFAULT_CONFIG }
         Object.entries(legacyPaths).forEach(([key, filePath]) => {
             if (fs.existsSync(filePath)) {
-                migrated[key] = JSON.parse(fs.readFileSync(filePath))
-                fs.unlinkSync(filePath)
+                try {
+                    migrated[key] = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+                    fs.unlinkSync(filePath) // 迁移后删除旧文件
+                } catch (e) {
+                    logger.error(`[随机歌词] 迁移 ${key} 配置失败:`, e)
+                }
             }
         })
-
+    
+        // 保存新配置
         this.#saveConfig(migrated)
         return migrated
     }

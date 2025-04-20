@@ -1,72 +1,44 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 
-// 获取当前模块路径
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-logger.info('--------- Xtower-Plugin 初始化 ---------')
-
-// 安全读取apps目录
-let files = []
-try {
-    files = fs.readdirSync(path.join(__dirname, 'apps'))
-        .filter(file => file.endsWith('.js') && !file.startsWith('_'))
-} catch (err) {
-    logger.error('读取apps目录失败:', err)
-    throw err
+// 安全加载函数
+async function safeImport(modulePath) {
+    try {
+        // 添加时间戳防止缓存
+        return await import(`${modulePath}?t=${Date.now()}`)
+    } catch (err) {
+        console.error(`加载模块 ${modulePath} 失败:`, err)
+        return null
+    }
 }
 
-// 异步加载所有模块
-const loadModules = async () => {
-    const imports = files.map(file => 
-        import(`./apps/${file}?t=${Date.now()}`) // 添加时间戳防止缓存
-            .then(module => {
-                return {
-                    name: file.replace('.js', ''),
-                    module
-                }
-            })
-            .catch(err => {
-                logger.error(`加载模块 ${file} 失败:`, err)
-                return {
-                    name: file.replace('.js', ''),
-                    error: err
-                }
-            })
-    )
-
-    const results = await Promise.all(imports)
+// 加载所有插件
+export async function loadApps() {
+    const appsDir = path.join(__dirname, 'apps')
     const apps = {}
-    let hasError = false
+    
+    try {
+        const files = fs.readdirSync(appsDir)
+            .filter(file => file.endsWith('.js'))
+            .filter(file => !file.startsWith('_'))
 
-    results.forEach(({name, module, error}) => {
-        if (error) {
-            hasError = true
-            return
+        for (const file of files) {
+            const name = path.basename(file, '.js')
+            const module = await safeImport(`./apps/${file}`)
+            
+            if (module) {
+                apps[name] = module.default || module
+                console.log(`成功加载模块: ${name}`)
+            }
         }
-        
-        // 获取模块的默认导出或第一个导出
-        const exported = module.default || module[Object.keys(module)[0]]
-        if (exported) {
-            apps[name] = exported
-        } else {
-            logger.warn(`模块 ${name} 没有有效导出`)
-            hasError = true
-        }
-    })
-
-    if (hasError) {
-        logger.warn('部分模块加载失败，但插件将继续运行')
-    } else {
-        logger.mark('Xtower-Plugin 所有模块载入成功')
+    } catch (err) {
+        console.error('加载插件时出错:', err)
     }
 
     return apps
 }
 
-// 导出加载好的模块
-export const apps = await loadModules().catch(err => {
-    logger.error('插件初始化失败:', err)
-    process.exit(1)
-})
+export const apps = await loadApps()
