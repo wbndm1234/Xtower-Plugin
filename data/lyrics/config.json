@@ -1,9 +1,0 @@
-{
-  "libraries": {},
-  "repositories": {},
-  "groupMapping": {},
-  "rateLimit": {
-    "maxPerHour": 60,
-    "cooldown": 3600000
-  }
-}
