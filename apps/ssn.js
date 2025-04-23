@@ -4,6 +4,8 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { dirname } from 'path'
 
+const PLUGIN_NAME = '谁是卧底'
+
 // 数据存储路径
 const DATA_DIR = path.resolve(process.cwd(), '../data/ssn')
 const ROOM_DATA_DIR = path.join(DATA_DIR, 'rooms')
