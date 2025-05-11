@@ -1,7 +1,7 @@
 import plugin from '../../../lib/plugins/plugin.js'
-const path = require('path')
-const fs = require('fs')
-const crypto = require('crypto')
+import path from 'path'
+import fs from 'fs'
+import crypto from 'crypto'
 
 // 数据管理类
 class DailyData {
