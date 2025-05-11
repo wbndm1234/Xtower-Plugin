@@ -142,7 +142,7 @@ export class LyricsPlugin extends plugin {
         }, 500) // 500ms 防抖延迟
     }
 
-    // ================= 歌词核心功能 =================
+    // ================= 歌词 =================
     // 刷新歌词缓存（自动去重）
     #refreshCache(dir) {
         if (!fs.existsSync(dir)) return
@@ -190,7 +190,7 @@ export class LyricsPlugin extends plugin {
                 this.#handleMultiLine(chunks, author, isRiv)
         } catch (err) {
             console.error('歌词获取失败:', err)
-            return '[随机歌词] 歌词服务暂时不可用'
+            return '[随机歌词] 歌词服务暂时不可用，请提醒Bot主参考https://github.com/Sczr0/Xtower-Plugin配置'
         }
     }
 

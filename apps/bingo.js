@@ -273,6 +273,7 @@ export class BingoPlugin extends plugin {
           `今日已有 ${dataManager.state.correctUsers.size} 人作答正确`,
           '\n提交格式为#bingo xx xx，xx的第1个数代表行，第2个数代表列,比如 13 代表第一行第三列。',
           '\n使用了聪明bingo游戏的规则，在此标注'
+          '#查询Bingo排名'
         ])
       } else if (isImageMatch || isAnswerMatch) {
         return await this.reply('题目正在生成中，要不等等看？')
@@ -294,8 +295,9 @@ export class BingoPlugin extends plugin {
           },
           `今日已有 ${dataManager.state.correctUsers.size} 人作答正确`,
           '\n（题目已更新）',
-          '\n提交格式为#bingo xx xx，xx的第1个数代表行，第2个数代表列,比如 13 代表第一行第三列。',
-          '\n使用了聪明bingo游戏的规则，在此标注'
+          '\n提交格式为#bingo xx xx，xx的第1个数代表行，第2个数代表列,比如 13 代表第一行第三列。需要把所有符合条件的格子全部提交，并满足至少一个答案，否则会验证失败',
+          '\n使用了聪明bingo游戏的规则，在此标注',
+          '\n可通过#查询Bingo排名查看自己的提交排名'
         ])
       }
     } catch (e) {
@@ -322,7 +324,7 @@ export class BingoPlugin extends plugin {
     try {
       const userCoords = this.parseInput(input)
       if (!userCoords) {
-        return await this.reply('坐标格式错误，栗子（例子）：#bingo 11 23 35')
+        return await this.reply('坐标格式错误，栗子（例子）：#bingo 11 23 35\n需要把所有符合条件的格子全部提交，并满足至少一个答案，否则会验证失败')
       }
       const { solution } = this.getTodayDataPath()
       const solutions = await this.fetchSolutions(solution)
@@ -364,7 +366,7 @@ export class BingoPlugin extends plugin {
           ])
         }
       } else {
-        return await this.reply('❌ 验证失败，未找到完全匹配的解QWQ')
+        return await this.reply('❌ 验证失败，可能是部分格子不满足条件/没有五连勾QWQ')
       }
     } catch (e) {
       await this.reply('验证服务暂时不可用')
