@@ -238,7 +238,7 @@ export class LyricsPlugin extends plugin {
     
     // 批量抽歌词（转发消息）
     async batchDraw(e) {
-        const match = e.msg.match(/^抽歌词\s+(\d+)\s*(-riv)?$/)
+        const match = e.msg.match(/^#?抽歌词\s+(\d+)\s*(-riv)?$/)
         if (!match) return await e.reply('❌ 格式：抽歌词 数量 [-riv]')
 
         const [_, countStr, isRiv] = match
