@@ -257,7 +257,7 @@ export class LyricsPlugin extends plugin {
             e.reply("无权限");
             return false;
         }
-        const match = e.msg.match(/^新建歌词仓库\s+(.+)\s+(.+)$/)
+        const match = e.msg.match(/^#?新建歌词仓库\s+(.+)\s+(.+)$/)
         if (!match) return await e.reply('[随机歌词]格式错误！正确格式：新建歌词仓库 名称 仓库URL')
         const [_, name, url] = match
 
@@ -451,7 +451,7 @@ export class LyricsPlugin extends plugin {
             e.reply("无权限");
             return false;
         }
-        const match = e.msg.match(/^关联群组\s+(\\d+)\\s+(.+)$/)
+        const match = e.msg.match(/^#?关联群组\s+(\d+)\s+(.+)$/)
         if (!match) return await e.reply('[随机歌词]格式不对哦～示范：【关联群组 群号 歌词库名】')
         
         const [_, groupId, libName] = match
@@ -469,7 +469,7 @@ export class LyricsPlugin extends plugin {
             e.reply("无权限");
             return false;
         }
-        const match = e.msg.match(/^获取歌词\s+(.+?)\\s+(.+)$/)
+        const match = e.msg.match(/^#?获取歌词\s+(.+?)\s+(.+)$/)
         if (!match) return await e.reply('📌 格式：获取歌词 库名 仓库名')
         
         const [_, libName, repoName] = match
@@ -609,7 +609,7 @@ export class LyricsPlugin extends plugin {
             e.reply("无权限");
             return false;
         }
-        const match = e.msg.match(/^设置频率限制\s+(\\d+)\\s+(\\d+)$/)
+        const match = e.msg.match(/^#?设置频率限制\s+(\d+)\s+(\d+)$/)
         if (!match) return await e.reply('⏳ 格式：设置频率限制 次数 冷却秒数')
         
         const [_, maxStr, cdStr] = match
