@@ -257,8 +257,8 @@ export class LyricsPlugin extends plugin {
             e.reply("无权限");
             return false;
         }
-        const match = e.msg.match(/^添加歌词仓库\s+(.+)\s+(.+)$/)
-        if (!match) return await e.reply('[随机歌词]格式错误！正确格式：添加歌词仓库 名称 仓库URL')
+        const match = e.msg.match(/^新建歌词仓库\s+(.+)\s+(.+)$/)
+        if (!match) return await e.reply('[随机歌词]格式错误！正确格式：新建歌词仓库 名称 仓库URL')
         const [_, name, url] = match
 
         try {
