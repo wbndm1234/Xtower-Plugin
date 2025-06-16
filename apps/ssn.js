@@ -387,7 +387,7 @@ export class WhoIsTheSpy extends plugin {
       
       const success = await this.sendPrivateMsg(p.userId, message.join('\n'), groupId)
 
-      // 如果发送失败,函数会自动清理游戏数据
+      // 如果发送失败,自动清理游戏数据
       if (!success) return
     }
 
@@ -418,50 +418,52 @@ export class WhoIsTheSpy extends plugin {
   }
 
   // 下一位玩家发言
-  async nextSpeaker(groupId) {
-    const gameData = await GameDataManager.load(groupId)
-    if (!gameData.status) return
+async nextSpeaker(groupId) {
+  const gameData = await GameDataManager.load(groupId)
+  //如果当前状态不是'playing'，则直接返回
+  if (!gameData.status || gameData.status !== 'playing') return
+
+  // 获取未淘汰的玩家
+  const activePlayers = gameData.players.filter(p => !p.eliminated)
   
-    // 获取未淘汰的玩家
-    const activePlayers = gameData.players.filter(p => !p.eliminated)
-    
-    // 如果发言索引超出范围，开始投票
-    if (gameData.currentSpeaker >= activePlayers.length) {
-      // 所有玩家已发言，进入投票阶段
-      this.startVoting(groupId)
+  // 如果发言索引超出范围，开始投票
+  if (gameData.currentSpeaker >= activePlayers.length) {
+    this.startVoting(groupId)
+    return
+  }
+
+  const currentSpeakerIndex = gameData.currentSpeaker
+  const currentPlayer = activePlayers[currentSpeakerIndex]
+  
+  if (this.gameTimers[groupId]) {
+    clearTimeout(this.gameTimers[groupId])
+    delete this.gameTimers[groupId]
+  }
+  
+  await this.sendGroupMsg(groupId, `请${currentPlayer.tempId}号 ${currentPlayer.nickname} 开始发言吧~ 你有30秒的时间哦 (＾▽＾)`)
+
+  this.gameTimers[groupId] = setTimeout(async () => {
+    const updatedGameData = await GameDataManager.load(groupId)
+    if (!updatedGameData.status || updatedGameData.status !== 'playing') {
       return
     }
-  
-    const currentSpeakerIndex = gameData.currentSpeaker  // 保存当前发言索引
-    const currentPlayer = activePlayers[currentSpeakerIndex]
     
-    // 清除之前的超时计时器
-    if (this.gameTimers[groupId]) {
-      clearTimeout(this.gameTimers[groupId])
-      delete this.gameTimers[groupId]
+    //检查此超时是否已过时
+    if (updatedGameData.currentSpeaker !== currentSpeakerIndex) {
+      return; 
     }
     
-    // 发送发言提示
-    await this.sendGroupMsg(groupId, `请${currentPlayer.tempId}号 ${currentPlayer.nickname} 开始发言吧~ 你有30秒的时间哦 (＾▽＾)`)
-  
-    // 设置新的超时计时器，使用索引而不是玩家对象
-    this.gameTimers[groupId] = setTimeout(async () => {
-      // 重新加载游戏数据，确保使用最新状态
-      const updatedGameData = await GameDataManager.load(groupId)
-      if (!updatedGameData.status || updatedGameData.status !== 'playing') {
-        return
-      }
-      
-      // 获取当前应该发言的玩家
-      const currentActivePlayers = updatedGameData.players.filter(p => !p.eliminated)
-      const currentSpeaker = currentActivePlayers[currentSpeakerIndex]
-      
-      await this.sendGroupMsg(groupId, `${currentSpeaker.tempId}号发言超时`)
-      updatedGameData.currentSpeaker++
-      await GameDataManager.save(groupId, updatedGameData)
-      this.nextSpeaker(groupId)
-    }, 30000)
-  }
+    const currentActivePlayers = updatedGameData.players.filter(p => !p.eliminated)
+    // 安全检查
+    if (currentSpeakerIndex >= currentActivePlayers.length) return;
+    const currentSpeaker = currentActivePlayers[currentSpeakerIndex]
+    
+    await this.sendGroupMsg(groupId, `${currentSpeaker.tempId}号发言超时`)
+    updatedGameData.currentSpeaker++
+    await GameDataManager.save(groupId, updatedGameData)
+    this.nextSpeaker(groupId)
+  }, 30000); // 建议使用配置项
+}
 
   // 结束发言
   async endSpeech(e) {
@@ -483,7 +485,7 @@ export class WhoIsTheSpy extends plugin {
     const currentSpeaker = activePlayers[speakerIndex]
     
     if (currentSpeaker.userId !== e.user_id) {
-      return e.reply('不是你的发言回合')
+      return e.reply('不是你的发言回合哦awa')
     }
   
     // 清除超时计时器
