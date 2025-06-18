@@ -1,4 +1,23 @@
 import plugin from '../../../lib/plugins/plugin.js'
+import fs from 'fs';
+import path from 'path';
+import yaml from 'js-yaml';
+
+// ================= 内部常量和路径配置 =================
+const PLUGIN_ROOT_NAME = 'Xtower-Plugin'; // 插件根目录名，用于构建路径
+const CONFIG_DIR_NAME = 'config';
+const USER_CONFIG_FILENAME = 'config.yaml';
+
+const PLUGIN_ROOT_PATH = path.join(process.cwd(), 'plugins', PLUGIN_ROOT_NAME);
+const CONFIG_PATH = path.join(PLUGIN_ROOT_PATH, CONFIG_DIR_NAME, USER_CONFIG_FILENAME);
+
+// 内部默认配置
+const INTERNAL_DEFAULTS = {
+  quickMath: {
+    answer_timeout_ms: 60000, // 60秒
+    normal_mode_max_attempts: 3
+  }
+};
 
 // 使用 Map 存储玩家状态
 const pendingQuestions = new Map()
@@ -65,6 +84,30 @@ export class QuickMath extends plugin {
         { reg: '^#无尽速算(简单|普通|困难|地狱)?$', fnc: 'startEndlessMode' }
       ]
     });
+    this.config = this.#loadConfig();
+    this.logger = {
+        mark: (...args) => console.log('[QuickMath MARK]', ...args),
+        error: (...args) => console.error('[QuickMath ERROR]', ...args),
+        warn: (...args) => console.warn('[QuickMath WARN]', ...args)
+    }
+  }
+
+  #loadConfig() {
+    let userConfig = {};
+    if (fs.existsSync(CONFIG_PATH)) {
+        try {
+            const fileContent = fs.readFileSync(CONFIG_PATH, 'utf8');
+            const fullConfig = yaml.load(fileContent) || {};
+            userConfig = fullConfig.quickMath || {}; // 只提取 quickMath 部分的配置
+        } catch (e) {
+            this.logger.error(`配置文件 ${CONFIG_PATH} 解析失败，将使用默认配置:`, e);
+        }
+    }
+    // 合并默认配置和用户配置
+    return {
+        ...INTERNAL_DEFAULTS.quickMath, // 使用 quickMath 下的默认值
+        ...userConfig
+    };
   }
 
   get isContext() {
@@ -129,6 +172,7 @@ export class QuickMath extends plugin {
     const oldData = pendingQuestions.get(userId);
     if (oldData) clearTimeout(oldData.timeout);
     
+    const gameTimeout = this.config.answer_timeout_ms || INTERNAL_DEFAULTS.quickMath.answer_timeout_ms;
     const timeout = setTimeout(() => {
       if (pendingQuestions.has(userId)) {
         const data = pendingQuestions.get(userId);
@@ -138,7 +182,7 @@ export class QuickMath extends plugin {
         if (data.mode === 'endless') replyMsg += `\n你在无尽模式中连续答对了 ${data.score} 题！`;
         e.reply(replyMsg, true);
       }
-    }, 60 * 1000);
+    }, gameTimeout);
 
     pendingQuestions.set(userId, {
       answer: String(answer),
@@ -194,14 +238,15 @@ export class QuickMath extends plugin {
         return true;
       }
       
-      if (questionData.attempts >= 3) {
-        e.reply(`回答错误超过3次！正确答案是 ${questionData.answer}。`, true);
+      const maxAttempts = this.config.normal_mode_max_attempts || INTERNAL_DEFAULTS.quickMath.normal_mode_max_attempts;
+      if (questionData.attempts >= maxAttempts) {
+        e.reply(`回答错误超过${maxAttempts}次！正确答案是 ${questionData.answer}。`, true);
         this.finish('handleAnswer');
         clearTimeout(questionData.timeout);
         pendingQuestions.delete(userId);
       } else {
         questionData.attempts++;
-        e.reply(`回答错误，你还有 ${4 - questionData.attempts} 次机会。`, true);
+        e.reply(`回答错误，你还有 ${maxAttempts + 1 - questionData.attempts} 次机会。`, true);
       }
     }
   }

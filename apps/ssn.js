@@ -7,7 +7,7 @@ import { dirname } from 'path'
 const PLUGIN_NAME = '谁是卧底'
 
 // --- 1. 通用数据管理模块 ---
-const DATA_DIR = path.resolve(process.cwd(), `../data/${PLUGIN_NAME}`)
+const DATA_DIR = path.resolve(process.cwd(), 'data', PLUGIN_NAME) // 修正了路径，使其在Yunzai的data目录下
 const ROOM_DATA_DIR = path.join(DATA_DIR, 'rooms')
 const LOCK_DIR = path.join(DATA_DIR, 'locks')
 
@@ -23,26 +23,33 @@ class FileLock {
   }
   async acquire() {
     const fsp = fs.promises
+    const startTime = Date.now();
     while (!this.acquired) {
+      if (Date.now() - startTime > 10000) { // 增加10秒超时以防止死锁
+          throw new Error(`获取锁 ${this.lockFile} 超时。`);
+      }
       try {
-        await fsp.writeFile(this.lockFile, process.pid.toString(), { flag: 'wx' })
+        await fsp.writeFile(this.lockFile, String(process.pid), { flag: 'wx' })
         this.acquired = true
         return true
       } catch (err) {
         if (err.code === 'EEXIST') {
           try {
             const stat = await fsp.stat(this.lockFile)
+            // 如果锁文件存在超过5秒，认为是过期的死锁
             if (Date.now() - stat.mtimeMs > 5000) {
               await fsp.unlink(this.lockFile)
-              continue
+              continue // 尝试重新获取
             }
-          } catch (e) { 
+          } catch (statErr) { 
+            // 如果在检查时文件消失，直接重试
             continue
           }
-          await new Promise(resolve => setTimeout(resolve, 100))
+          // 等待一小段时间再试
+          await new Promise(resolve => setTimeout(resolve, 50 + Math.random() * 50))
           continue
         }
-        throw err
+        throw err // 其他错误直接抛出
       }
     }
   }
@@ -52,10 +59,11 @@ class FileLock {
         await fs.promises.unlink(this.lockFile)
         this.acquired = false
       } catch (err) {
+        // 如果文件已经被删除，不是错误
         if (err.code !== 'ENOENT') {
           console.warn(`[${PLUGIN_NAME}] 释放锁文件 ${this.lockFile} 时出错: ${err.message}`)
         }
-        this.acquired = false;
+        this.acquired = false; // 确保状态被重置
       }
     }
   }
@@ -87,7 +95,8 @@ class GameDataManager {
     try {
       await lock.acquire()
       await fs.promises.writeFile(roomFile, JSON.stringify(data, null, 2))
-    } catch (err) {
+    } catch (err)
+    {
       console.error(`[${PLUGIN_NAME}] 保存游戏数据失败 (${groupId}):`, err)
     } finally {
       await lock.release()
@@ -99,7 +108,10 @@ class GameDataManager {
     const lock = new FileLock(lockFile)
     try {
       await lock.acquire()
-      await fs.promises.unlink(roomFile)
+      // 使用 fse.pathExists 避免在文件不存在时unlink抛出错误
+      if(fs.existsSync(roomFile)) {
+        await fs.promises.unlink(roomFile)
+      }
     } catch (err) {
       if (err.code !== 'ENOENT') {
         console.error(`[${PLUGIN_NAME}] 删除游戏数据失败 (${groupId}):`, err)
@@ -112,10 +124,10 @@ class GameDataManager {
 
 class GameCleaner {
     static cleanupTimers = new Map()
-    static CLEANUP_DELAY = 2 * 60 * 60 * 1000
+    static CLEANUP_DELAY = 2 * 60 * 60 * 1000 // 2小时
 
     static registerGame(groupId, instance) {
-      this.cleanupGame(groupId)
+      this.cleanupGame(groupId) // 先清理旧的计时器
       const timer = setTimeout(async () => {
         console.log(`[${PLUGIN_NAME}] 正在清理超时游戏 (${groupId})...`)
         const gameData = await GameDataManager.load(groupId)
@@ -158,7 +170,7 @@ export class WhoIsTheSpy extends plugin {
   constructor() {
     super({
       name: PLUGIN_NAME,
-      dsc: '谁是卧底游戏（最终稳定版）',
+      dsc: '谁是卧底游戏',
       event: 'message',
       priority: 500,
       rule: [
@@ -175,12 +187,13 @@ export class WhoIsTheSpy extends plugin {
 
     const __filename = fileURLToPath(import.meta.url)
     const __dirname = dirname(__filename)
+    // 假设资源在插件的 resource 目录下
     this.wordPairs = JSON.parse(fs.readFileSync(path.join(__dirname, '../resource/word_pairs.json'),'utf8'))
     
     this.gameInstances = new Map()
     this.actionTimeouts = new Map()
-    this.SPEECH_TIMEOUT = 30 * 1000
-    this.VOTE_TIMEOUT = 60 * 1000
+    this.SPEECH_TIMEOUT = 30 * 1000 // 30秒发言
+    this.VOTE_TIMEOUT = 60 * 1000 // 60秒投票
 
     process.on('exit', () => this.cleanup())
   }
@@ -193,20 +206,24 @@ export class WhoIsTheSpy extends plugin {
       if (gameData) {
         game = new WhoIsTheSpyGame(gameData)
         this.gameInstances.set(groupId, game)
+        // 如果加载的游戏不是结束状态，重新注册清理计时器
         if (game.gameState.status !== 'ended') {
           GameCleaner.registerGame(groupId, this)
         }
       } else if (createIfNotExist) {
         game = new WhoIsTheSpyGame()
         this.gameInstances.set(groupId, game)
-        GameCleaner.registerGame(groupId, this)
       }
     }
     return game
   }
 
   async saveGame(groupId, game) {
-    if (game) await GameDataManager.save(groupId, game.getGameData())
+    if (game) {
+      await GameDataManager.save(groupId, game.getGameData());
+      // 每次保存都意味着游戏有活动，重置自动清理计时器
+      GameCleaner.registerGame(groupId, this);
+    }
   }
 
   async deleteGame(groupId) {
@@ -247,8 +264,11 @@ export class WhoIsTheSpy extends plugin {
 
     const result = game.removePlayer(e.user_id)
     if (result.success) {
-      if (result.gameDissolved) await this.deleteGame(groupId)
-      else await this.saveGame(groupId, game)
+      if (result.gameDissolved) {
+        await this.deleteGame(groupId);
+      } else {
+        await this.saveGame(groupId, game);
+      }
     }
     return e.reply(result.message, false)
   }
@@ -291,6 +311,7 @@ export class WhoIsTheSpy extends plugin {
     if (!game || game.gameState.status !== 'playing') return
     
     const activePlayers = game.players.filter(p => p.isAlive)
+    // 注意：moveToNextSpeaker 会使 index 加一，所以当前发言者是 index - 1
     const currentSpeakerIndex = game.gameState.currentSpeakerIndex - 1
     if (currentSpeakerIndex < 0 || currentSpeakerIndex >= activePlayers.length) return
 
@@ -362,16 +383,19 @@ export class WhoIsTheSpy extends plugin {
 
     const timeoutId = setTimeout(async () => {
       const game = await this.getGameInstance(groupId)
+      if (!game || game.gameState.status === 'ended') {
+        this.actionTimeouts.delete(groupId)
+        return
+      }
       
-      // *** 最终修复的防御性检查 ***
       let expectedStatus;
       switch (type) {
         case 'speech': expectedStatus = 'playing'; break;
         case 'vote': expectedStatus = 'voting'; break;
-        default: expectedStatus = 'unknown'; // 不应该发生
+        default: return;
       }
-
-      if (!game || game.gameState.status === 'ended' || game.gameState.status !== expectedStatus) {
+      // 防御性检查，如果状态不匹配，说明流程已经被其他操作改变，计时器作废
+      if (game.gameState.status !== expectedStatus) {
         this.actionTimeouts.delete(groupId)
         return
       }
@@ -402,65 +426,70 @@ export class WhoIsTheSpy extends plugin {
   async startSpeakingRoundFlow(groupId, game) {
     game.gameState.status = 'playing'
     game.gameState.currentSpeakerIndex = 0
-    await this.saveGame(groupId, game)
+    await this.saveGame(groupId, game) // 在回合开始时保存一次状态
 
     await this.sendSystemGroupMsg(groupId, `--- 第 ${game.gameState.currentRound} 轮发言开始 ---`)
     await this.processNextSpeaker(groupId)
   }
-  
+
   async processNextSpeaker(groupId) {
-    const game = await this.getGameInstance(groupId)
+    const game = await this.getGameInstance(groupId);
     if (!game || game.gameState.status !== 'playing') return;
 
-    const nextSpeaker = game.moveToNextSpeaker()
-    await this.saveGame(groupId, game)
+    const nextSpeaker = game.moveToNextSpeaker();
 
+    // 只有在确定有下一位发言人时，才保存游戏状态
     if (nextSpeaker) {
-        const msg = [segment.at(nextSpeaker.userId), ` 请开始发言 (${this.SPEECH_TIMEOUT / 1000}秒)。`]
-        await this.sendSystemGroupMsg(groupId, msg)
-        this.setActionTimeout(groupId, 'speech', this.SPEECH_TIMEOUT)
+        await this.saveGame(groupId, game); // 保存更新后的 speaker index
+        const msg = [segment.at(nextSpeaker.userId), ` 请开始发言 (${this.SPEECH_TIMEOUT / 1000}秒)。发言完毕请说“结束发言”。`];
+        await this.sendSystemGroupMsg(groupId, msg);
+        this.setActionTimeout(groupId, 'speech', this.SPEECH_TIMEOUT);
     } else {
-        this.clearActionTimeout(groupId)
-        await this.sendSystemGroupMsg(groupId, "所有玩家发言完毕，进入投票阶段。")
-        await this.startVotingFlow(groupId, game)
+        // 没有下一位发言人，说明发言阶段结束
+        this.clearActionTimeout(groupId);
+        await this.sendSystemGroupMsg(groupId, "所有玩家发言完毕，进入投票阶段。");
+        // 直接进入投票流程，由 startVotingFlow 负责改变状态和保存
+        await this.startVotingFlow(groupId, game);
     }
   }
 
   async startVotingFlow(groupId, game) {
-    game.gameState.status = 'voting'
-    await this.saveGame(groupId, game)
+    game.gameState.status = 'voting'; // 明确设置状态为投票
+    // 在这里统一保存进入投票阶段的状态
+    await this.saveGame(groupId, game);
 
-    const alivePlayerList = game.getAlivePlayerList()
-    const msg = `现在开始投票，请选择你要投出的人。\n发送 #投票 [编号]\n你有 ${this.VOTE_TIMEOUT / 1000} 秒时间。\n存活玩家列表：\n${alivePlayerList}`
-    await this.sendSystemGroupMsg(groupId, msg)
+    const alivePlayerList = game.getAlivePlayerList();
+    const msg = `现在开始投票，请选择你要投出的人。\n发送 #投票 [编号]\n你有 ${this.VOTE_TIMEOUT / 1000} 秒时间。\n存活玩家列表：\n${alivePlayerList}`;
+    await this.sendSystemGroupMsg(groupId, msg);
 
-    this.setActionTimeout(groupId, 'vote', this.VOTE_TIMEOUT)
+    this.setActionTimeout(groupId, 'vote', this.VOTE_TIMEOUT);
   }
 
   async processVoteEnd(groupId) {
     const game = await this.getGameInstance(groupId);
+    // 增加防御性判断，防止游戏已结束但计时器仍在运行的极端情况
     if (!game || game.gameState.status !== 'voting') return;
 
-    const result = game.processVotes()
-    await this.saveGame(groupId, game)
-    await this.sendSystemGroupMsg(groupId, result.summary)
+    const result = game.processVotes();
+    await this.saveGame(groupId, game); // 保存计票后的结果
+    await this.sendSystemGroupMsg(groupId, result.summary);
     
-    const { isEnd, winner } = result.gameStatus
+    const { isEnd, winner } = result.gameStatus;
     if (isEnd) {
-      await this.endGameFlow(groupId, game, winner)
+      await this.endGameFlow(groupId, game, winner);
     } else {
-      game.gameState.currentRound++
-      await this.saveGame(groupId, game)
-      await this.startSpeakingRoundFlow(groupId, game)
+      game.gameState.currentRound++;
+      // 下一轮的 speaking flow 会自己保存状态，这里无需重复保存
+      await this.startSpeakingRoundFlow(groupId, game);
     }
   }
 
   async endGameFlow(groupId, game, winner) {
     game.gameState.status = 'ended';
-    await this.saveGame(groupId, game);
-
-    await this.sendSystemGroupMsg(groupId, `游戏结束！${winner} 阵营获胜！\n` + game.getFinalRoles())
-    await this.deleteGame(groupId)
+    // 在游戏彻底结束前，不再保存状态，直接准备删除
+    
+    await this.sendSystemGroupMsg(groupId, `游戏结束！${winner} 阵营获胜！\n` + game.getFinalRoles());
+    await this.deleteGame(groupId);
   }
 
   // --- 辅助函数 ---
@@ -478,7 +507,7 @@ export class WhoIsTheSpy extends plugin {
     } catch (err) {
       console.error(`[${PLUGIN_NAME}] 发送私聊消息失败 (userId: ${userId}):`, err)
       if (sourceGroupId) {
-        await this.sendSystemGroupMsg(sourceGroupId, `[!] 无法向玩家 QQ:${userId} 发送私聊消息，请检查好友关系。`)
+        await this.sendSystemGroupMsg(sourceGroupId, `[!] 无法向玩家 QQ:${userId} 发送私聊消息，请检查好友关系或机器人是否被屏蔽。`)
       }
       return false
     }

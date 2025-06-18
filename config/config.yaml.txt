@@ -1,0 +1,25 @@
+# Xtower-Plugin 插件统一配置文件
+
+lyrics:
+  # 频率限制
+  rateLimit:
+    maxPerHour: 60       # 每小时最大调用次数
+    cooldown: 3600000    # 冷却时间 (毫秒), 例如 3600000 表示1小时
+  # 批量抽歌词最大数量
+  batch_draw_max_count: 20
+
+quickMath: # com.js - 自定义速算
+  # 答题超时时间 (毫秒)
+  answer_timeout_ms: 60000 # 例如 60000 表示60秒
+  # 普通模式下答错次数上限
+  normal_mode_max_attempts: 3
+
+russianRoulette: # els.js - 俄罗斯转盘
+  # 玩家初始旋转机会次数
+  initial_spins: 4
+  # 未指定时的默认子弹数量 (1-5)
+  default_bullet_count: 1
+  # 游戏自动开始的等待时间 (毫秒)
+  auto_start_delay_ms: 30000 # 例如 30000 表示30秒
+  # 左轮弹巢容量 (通常为6，影响最大玩家数)
+  cylinder_capacity: 6

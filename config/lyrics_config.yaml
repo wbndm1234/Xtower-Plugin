@@ -1,0 +1,11 @@
+# lyrics.js 插件的用户可配置项
+
+# 频率限制
+# maxPerHour: 每小时最大调用次数
+# cooldown: 冷却时间 (毫秒)
+rateLimit:
+  maxPerHour: 60
+  cooldown: 3600000 # 1小时
+
+# 批量抽歌词最大数量
+batch_draw_max_count: 20

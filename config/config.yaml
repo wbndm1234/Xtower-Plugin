@@ -1,0 +1,13 @@
+lyrics:
+  rateLimit:
+    maxPerHour: 60
+    cooldown: 3600000
+  batch_draw_max_count: 20
+quickMath:
+  answer_timeout_ms: 60000
+  normal_mode_max_attempts: 3
+russianRoulette:
+  initial_spins: 4
+  default_bullet_count: 1
+  auto_start_delay_ms: 30000
+  cylinder_capacity: 6
