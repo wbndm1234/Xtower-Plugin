@@ -16,7 +16,7 @@ cd ./plugins/Xtower-Plugin/
 #安装插件所需依赖
 pnpm install -P
 ```
-> 使用Gitee（镜像仓库且更新及时）
+> 使用Gitee（国内镜像推荐）
 
 ```
 #安装插件本体
@@ -26,7 +26,7 @@ cd ./plugins/Xtower-Plugin/
 #安装插件所需依赖
 pnpm install -P
 ```
-> 使用Gitcode（镜像仓库但更新不及时）
+> 使用Gitcode（镜像仓库备用，更新可能滞后）
 
 ```
 #安装插件本体
