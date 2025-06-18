@@ -108,7 +108,7 @@ class GameDataManager {
     const lock = new FileLock(lockFile)
     try {
       await lock.acquire()
-      // 使用 fse.pathExists 避免在文件不存在时unlink抛出错误
+      // 使用 fs.existsSync 避免在文件不存在时unlink抛出错误
       if(fs.existsSync(roomFile)) {
         await fs.promises.unlink(roomFile)
       }
@@ -204,12 +204,14 @@ export class WhoIsTheSpy extends plugin {
     if (!game) {
       const gameData = await GameDataManager.load(groupId)
       if (gameData) {
+        // BUG修复：如果从磁盘加载的游戏状态已经是 'ended'，则不应该加载它，直接返回null
+        if (gameData.gameState.status === 'ended') {
+            await GameDataManager.delete(groupId); // 清理掉这个无用的结束文件
+            return null;
+        }
         game = new WhoIsTheSpyGame(gameData)
         this.gameInstances.set(groupId, game)
-        // 如果加载的游戏不是结束状态，重新注册清理计时器
-        if (game.gameState.status !== 'ended') {
-          GameCleaner.registerGame(groupId, this)
-        }
+        GameCleaner.registerGame(groupId, this)
       } else if (createIfNotExist) {
         game = new WhoIsTheSpyGame()
         this.gameInstances.set(groupId, game)
@@ -221,7 +223,6 @@ export class WhoIsTheSpy extends plugin {
   async saveGame(groupId, game) {
     if (game) {
       await GameDataManager.save(groupId, game.getGameData());
-      // 每次保存都意味着游戏有活动，重置自动清理计时器
       GameCleaner.registerGame(groupId, this);
     }
   }
@@ -311,7 +312,6 @@ export class WhoIsTheSpy extends plugin {
     if (!game || game.gameState.status !== 'playing') return
     
     const activePlayers = game.players.filter(p => p.isAlive)
-    // 注意：moveToNextSpeaker 会使 index 加一，所以当前发言者是 index - 1
     const currentSpeakerIndex = game.gameState.currentSpeakerIndex - 1
     if (currentSpeakerIndex < 0 || currentSpeakerIndex >= activePlayers.length) return
 
@@ -350,13 +350,21 @@ export class WhoIsTheSpy extends plugin {
   async forceEndGame(e, isAutoCleanup = false) {
     const groupId = e.group_id
     const game = await this.getGameInstance(groupId)
-    if (!game) return isAutoCleanup ? null : e.reply('本群没有游戏。')
+    //增加对游戏是否已结束状态的判断，防止重复结束
+    if (!game || game.gameState.status === 'ended') {
+        return isAutoCleanup ? null : e.reply('本群没有进行中的游戏。')
+    }
     
     const canEnd = isAutoCleanup || e.isMaster || game.gameState.hostUserId === e.user_id
     if (!canEnd) return e.reply('只有房主或机器人主人才能结束游戏。')
     
+    //立即清除计时器，防止在发送消息的等待期间，旧的计时器触发导致游戏继续。
+    this.clearActionTimeout(groupId)
+    // 并且在内存中立即标记游戏结束
+    game.gameState.status = 'ended'
+
     await this.sendSystemGroupMsg(groupId, `游戏已被 ${(e.sender.card || e.sender.nickname)} 强制结束。`)
-    if (game.gameState.status !== 'waiting' && game.gameState.status !== 'ended') {
+    if (game.gameState.status !== 'waiting') { // 此处状态已经是 'ended' 了
         await this.sendSystemGroupMsg(groupId, "公布身份：\n" + game.getFinalRoles())
     }
     await this.deleteGame(groupId)
@@ -366,11 +374,11 @@ export class WhoIsTheSpy extends plugin {
   async showGameStatus(e) {
     const groupId = e.group_id
     const game = await this.getGameInstance(groupId)
-    if (!game || game.gameState.status === 'ended') return e.reply('本群没有游戏。')
+    if (!game || game.gameState.status === 'ended') return e.reply('本群没有进行中的游戏。')
 
     let statusMsg = `--- ${PLUGIN_NAME} 游戏状态 ---\n`
     statusMsg += `模式: ${game.gameState.isOpenIdentity ? '明牌' : '暗牌'}\n`
-    statusMsg += `状态: ${game.gameState.status}\n`
+    statusMsg += `状态: ${this.getChineseStatus(game.gameState.status)}\n` // 优化：显示中文状态
     statusMsg += `回合: ${game.gameState.currentRound}\n`
     statusMsg += `存活玩家 (${game.players.filter(p => p.isAlive).length}/${game.players.length}):\n`
     statusMsg += game.getAlivePlayerList()
@@ -382,6 +390,7 @@ export class WhoIsTheSpy extends plugin {
     this.clearActionTimeout(groupId)
 
     const timeoutId = setTimeout(async () => {
+      //此处重新获取游戏实例，以确保状态是最新的
       const game = await this.getGameInstance(groupId)
       if (!game || game.gameState.status === 'ended') {
         this.actionTimeouts.delete(groupId)
@@ -394,7 +403,7 @@ export class WhoIsTheSpy extends plugin {
         case 'vote': expectedStatus = 'voting'; break;
         default: return;
       }
-      // 防御性检查，如果状态不匹配，说明流程已经被其他操作改变，计时器作废
+
       if (game.gameState.status !== expectedStatus) {
         this.actionTimeouts.delete(groupId)
         return
@@ -402,8 +411,8 @@ export class WhoIsTheSpy extends plugin {
       
       switch (type) {
         case 'speech':
-            await this.sendSystemGroupMsg(groupId, "发言时间到，自动进入下一位。")
-            await this.processNextSpeaker(groupId)
+            // BUG修复：此处不再显示 "自动进入下一位"，因为这可能是BUG 3的来源之一，让流程函数自己发消息。
+            await this.processNextSpeaker(groupId, true) // 传入超时标记
             break
         case 'vote':
             await this.sendSystemGroupMsg(groupId, "投票时间到，开始计票。")
@@ -426,36 +435,38 @@ export class WhoIsTheSpy extends plugin {
   async startSpeakingRoundFlow(groupId, game) {
     game.gameState.status = 'playing'
     game.gameState.currentSpeakerIndex = 0
-    await this.saveGame(groupId, game) // 在回合开始时保存一次状态
+    await this.saveGame(groupId, game)
 
     await this.sendSystemGroupMsg(groupId, `--- 第 ${game.gameState.currentRound} 轮发言开始 ---`)
-    await this.processNextSpeaker(groupId)
+    await this.processNextSpeaker(groupId, false) // 初始调用，非超时
   }
 
-  async processNextSpeaker(groupId) {
+  async processNextSpeaker(groupId, fromTimeout = false) {
     const game = await this.getGameInstance(groupId);
     if (!game || game.gameState.status !== 'playing') return;
 
+    if (fromTimeout) {
+        // 仅在由超时触发时发送此消息
+        await this.sendSystemGroupMsg(groupId, "发言时间到，自动进入下一位。");
+    }
+
     const nextSpeaker = game.moveToNextSpeaker();
 
-    // 只有在确定有下一位发言人时，才保存游戏状态
     if (nextSpeaker) {
-        await this.saveGame(groupId, game); // 保存更新后的 speaker index
+        await this.saveGame(groupId, game);
         const msg = [segment.at(nextSpeaker.userId), ` 请开始发言 (${this.SPEECH_TIMEOUT / 1000}秒)。发言完毕请说“结束发言”。`];
         await this.sendSystemGroupMsg(groupId, msg);
         this.setActionTimeout(groupId, 'speech', this.SPEECH_TIMEOUT);
     } else {
-        // 没有下一位发言人，说明发言阶段结束
-        this.clearActionTimeout(groupId);
+        this.clearActionTimeout(groupId); // 清理最后一个发言者的计时器
         await this.sendSystemGroupMsg(groupId, "所有玩家发言完毕，进入投票阶段。");
-        // 直接进入投票流程，由 startVotingFlow 负责改变状态和保存
         await this.startVotingFlow(groupId, game);
     }
   }
 
   async startVotingFlow(groupId, game) {
-    game.gameState.status = 'voting'; // 明确设置状态为投票
-    // 在这里统一保存进入投票阶段的状态
+    game.gameState.status = 'voting';
+    game.gameState.votes = {}; // 重置投票记录
     await this.saveGame(groupId, game);
 
     const alivePlayerList = game.getAlivePlayerList();
@@ -467,32 +478,45 @@ export class WhoIsTheSpy extends plugin {
 
   async processVoteEnd(groupId) {
     const game = await this.getGameInstance(groupId);
-    // 增加防御性判断，防止游戏已结束但计时器仍在运行的极端情况
     if (!game || game.gameState.status !== 'voting') return;
 
     const result = game.processVotes();
-    await this.saveGame(groupId, game); // 保存计票后的结果
     await this.sendSystemGroupMsg(groupId, result.summary);
     
+    // BUG修复：在宣布出局后，立即检查游戏是否结束
     const { isEnd, winner } = result.gameStatus;
     if (isEnd) {
       await this.endGameFlow(groupId, game, winner);
     } else {
+      // 游戏未结束，状态更新并进入下一轮
       game.gameState.currentRound++;
-      // 下一轮的 speaking flow 会自己保存状态，这里无需重复保存
+      await this.saveGame(groupId, game); // 保存新回合的状态
       await this.startSpeakingRoundFlow(groupId, game);
     }
   }
 
   async endGameFlow(groupId, game, winner) {
+    //立即清除计时器并设置状态
+    this.clearActionTimeout(groupId);
     game.gameState.status = 'ended';
-    // 在游戏彻底结束前，不再保存状态，直接准备删除
     
     await this.sendSystemGroupMsg(groupId, `游戏结束！${winner} 阵营获胜！\n` + game.getFinalRoles());
+    
+    // 游戏结束后，彻底删除游戏数据。
     await this.deleteGame(groupId);
   }
 
   // --- 辅助函数 ---
+  getChineseStatus(status) {
+    const map = {
+        'waiting': '等待中',
+        'playing': '发言中',
+        'voting': '投票中',
+        'ended': '已结束'
+    };
+    return map[status] || '未知';
+  }
+
   async sendSystemGroupMsg(groupId, msg) {
     if (!groupId || !msg) return
     try { await Bot.pickGroup(groupId).sendMsg(msg) } 
