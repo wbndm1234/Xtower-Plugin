@@ -6,7 +6,7 @@ Xtower-Plugin 是一个原有的 JS 功能集成 Plugin，包括了随机歌词�
 
 在 Yunzai 目录下运行：
 
-> 使用Github
+> 使用Github（更新及时）
 
 ```
 #安装插件本体
@@ -16,7 +16,7 @@ cd ./plugins/Xtower-Plugin/
 #安装插件所需依赖
 pnpm install -P
 ```
-> 使用Gitee
+> 使用Gitee（镜像仓库且更新及时）
 
 ```
 #安装插件本体
@@ -26,7 +26,7 @@ cd ./plugins/Xtower-Plugin/
 #安装插件所需依赖
 pnpm install -P
 ```
-> 使用Gitcode
+> 使用Gitcode（镜像仓库但更新不及时）
 
 ```
 #安装插件本体
