@@ -11,3 +11,5 @@ russianRoulette:
   default_bullet_count: 1
   auto_start_delay_ms: 30000
   cylinder_capacity: 8
+  initial_foresights: 1
+  initial_skips: 1

@@ -11,6 +11,7 @@ const pluginName = 'xtower-tlugin' // 与 package.json 中的 name 或插件文�
 const pluginConfigPath = path.join(process.cwd(), 'plugins', pluginName, 'config', 'config.yaml');
 
 // 默认配置，当插件首次加载或配置不存在时使用
+// 新增了 initial_foresights 和 initial_skips
 const defaultConfig = {
   lyrics: {
     rateLimit: {
@@ -25,6 +26,8 @@ const defaultConfig = {
   },
   russianRoulette: {
     initial_spins: 4,
+    initial_foresights: 1, // 新增：初始预知次数
+    initial_skips: 1, // 新增：初始跳过次数
     default_bullet_count: 1,
     auto_start_delay_ms: 30000,
     cylinder_capacity: 6
@@ -145,6 +148,26 @@ export function supportGuoba () {
           }
         },
         {
+          field: 'russianRoulette.initial_foresights',
+          label: '初始预知次数',
+          bottomHelpMessage: '玩家开始游戏时拥有的预知技能次数',
+          component: 'InputNumber',
+          componentProps: {
+            min: 0,
+            placeholder: '例如: 1'
+          }
+        },
+        {
+          field: 'russianRoulette.initial_skips',
+          label: '初始跳过次数',
+          bottomHelpMessage: '玩家开始游戏时拥有的跳过本轮技能次数',
+          component: 'InputNumber',
+          componentProps: {
+            min: 0,
+            placeholder: '例如: 1'
+          }
+        },
+        {
           field: 'russianRoulette.default_bullet_count',
           label: '默认子弹数量',
           bottomHelpMessage: '创建游戏时，若未指定，默认放入的子弹数量',
@@ -167,7 +190,7 @@ export function supportGuoba () {
         {
           field: 'russianRoulette.cylinder_capacity',
           label: '弹巢容量',
-          bottomHelpMessage: '左轮手枪的弹巢总容量',
+          bottomHelpMessage: '左轮手枪的弹巢总容量，也决定了游戏最大人数',
           component: 'InputNumber',
           componentProps: {
             min: 2,
