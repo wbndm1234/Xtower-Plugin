@@ -4,7 +4,7 @@ import yaml from 'js-yaml' // 引入 js-yaml 库
 import lodash from 'lodash'
 
 // 插件名称，应与你的插件文件夹名称一致
-const pluginName = 'Xtower-Plugin' // 与 package.json 中的 name 或插件文件夹名一致
+const pluginName = 'xtower-tlugin' // 与 package.json 中的 name 或插件文件夹名一致
 
 // 插件配置文件的路径
 // 修改此处以匹配你的文件结构： plugins/Xtower-Plugin/config/config.yaml
