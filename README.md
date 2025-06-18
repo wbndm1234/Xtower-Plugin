@@ -13,6 +13,8 @@
   <img src="https://img.shields.io/badge/License-BSD--3--Clause-blue?style=flat-square" alt="License">
 </p>
 
+![:动态访问量](https://count.kjchmc.cn/get/@:xtower-plugin)
+
 一个多功能插件，集成了多种功能。
 
 ### 功能一览
