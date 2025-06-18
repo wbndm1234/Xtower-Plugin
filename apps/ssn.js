@@ -1,547 +1,401 @@
-import plugin from '../../../lib/plugins/plugin.js'
-import fs from 'fs'
-import path from 'path'
-import { fileURLToPath } from 'url'
-import { dirname } from 'path'
+import plugin from '../../../lib/plugins/plugin.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
-const PLUGIN_NAME = '谁是卧底'
+// --- 配置项 ---
+const WAITING_TIMEOUT = 5 * 60 * 1000; // 等待阶段超时时间 (5分钟)
+const SPEAKING_TIMEOUT = 45 * 1000;   // 发言阶段超时时间 (45秒)
+const VOTING_TIMEOUT = 45 * 1000;     // 投票阶段超时时间 (45秒)
 
-// --- 1. 通用数据管理模块 ---
-const DATA_DIR = path.resolve(process.cwd(), 'data', PLUGIN_NAME) // 修正了路径，使其在Yunzai的data目录下
-const ROOM_DATA_DIR = path.join(DATA_DIR, 'rooms')
-const LOCK_DIR = path.join(DATA_DIR, 'locks')
+// 游戏数据存储在内存中
+const gameRooms = {};
 
-// 确保目录存在 (启动时同步操作是可接受的)
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
-if (!fs.existsSync(ROOM_DATA_DIR)) fs.mkdirSync(ROOM_DATA_DIR, { recursive: true })
-if (!fs.existsSync(LOCK_DIR)) fs.mkdirSync(LOCK_DIR, { recursive: true })
+// 插件根目录
+const _path = process.cwd();
+const plugin_path = path.join(_path, 'plugins', 'Xtower-Plugin');
 
-class FileLock {
-  constructor(lockFile) {
-    this.lockFile = lockFile
-    this.acquired = false
+// 加载词库
+let wordPairs = [];
+try {
+  const wordsPath = path.join(plugin_path, 'resource', 'word_pairs.json');
+  wordPairs = JSON.parse(fs.readFileSync(wordsPath, 'utf8'));
+  if (!Array.isArray(wordPairs) || wordPairs.length === 0) {
+    logger.warn('[谁是卧底] 词库 resource/word_pairs.json 加载失败或为空。');
   }
-  async acquire() {
-    const fsp = fs.promises
-    const startTime = Date.now();
-    while (!this.acquired) {
-      if (Date.now() - startTime > 10000) { // 增加10秒超时以防止死锁
-          throw new Error(`获取锁 ${this.lockFile} 超时。`);
-      }
-      try {
-        await fsp.writeFile(this.lockFile, String(process.pid), { flag: 'wx' })
-        this.acquired = true
-        return true
-      } catch (err) {
-        if (err.code === 'EEXIST') {
-          try {
-            const stat = await fsp.stat(this.lockFile)
-            // 如果锁文件存在超过5秒，认为是过期的死锁
-            if (Date.now() - stat.mtimeMs > 5000) {
-              await fsp.unlink(this.lockFile)
-              continue // 尝试重新获取
-            }
-          } catch (statErr) { 
-            // 如果在检查时文件消失，直接重试
-            continue
-          }
-          // 等待一小段时间再试
-          await new Promise(resolve => setTimeout(resolve, 50 + Math.random() * 50))
-          continue
-        }
-        throw err // 其他错误直接抛出
-      }
-    }
-  }
-  async release() {
-    if (this.acquired) {
-      try {
-        await fs.promises.unlink(this.lockFile)
-        this.acquired = false
-      } catch (err) {
-        // 如果文件已经被删除，不是错误
-        if (err.code !== 'ENOENT') {
-          console.warn(`[${PLUGIN_NAME}] 释放锁文件 ${this.lockFile} 时出错: ${err.message}`)
-        }
-        this.acquired = false; // 确保状态被重置
-      }
-    }
-  }
+} catch (error) {
+  logger.error('[谁是卧底] 加载词库失败', error);
+  logger.warn('[谁是卧底] 请在 plugins/Xtower-Plugin/resource/ 目录下创建 word_pairs.json。');
 }
 
-class GameDataManager {
-  static async load(groupId) {
-    const roomFile = path.join(ROOM_DATA_DIR, `${groupId}.json`)
-    if (!fs.existsSync(roomFile)) return null
-
-    const lockFile = path.join(LOCK_DIR, `${groupId}.lock`)
-    const lock = new FileLock(lockFile)
-    try {
-      await lock.acquire()
-      const data = await fs.promises.readFile(roomFile, 'utf8')
-      return JSON.parse(data)
-    } catch (err) {
-      if (err.code === 'ENOENT') return null
-      console.error(`[${PLUGIN_NAME}] 读取游戏数据失败 (${groupId}):`, err)
-      return null
-    } finally {
-      await lock.release()
-    }
-  }
-  static async save(groupId, data) {
-    const roomFile = path.join(ROOM_DATA_DIR, `${groupId}.json`)
-    const lockFile = path.join(LOCK_DIR, `${groupId}.lock`)
-    const lock = new FileLock(lockFile)
-    try {
-      await lock.acquire()
-      await fs.promises.writeFile(roomFile, JSON.stringify(data, null, 2))
-    } catch (err)
-    {
-      console.error(`[${PLUGIN_NAME}] 保存游戏数据失败 (${groupId}):`, err)
-    } finally {
-      await lock.release()
-    }
-  }
-  static async delete(groupId) {
-    const roomFile = path.join(ROOM_DATA_DIR, `${groupId}.json`)
-    const lockFile = path.join(LOCK_DIR, `${groupId}.lock`)
-    const lock = new FileLock(lockFile)
-    try {
-      await lock.acquire()
-      // 使用 fs.existsSync 避免在文件不存在时unlink抛出错误
-      if(fs.existsSync(roomFile)) {
-        await fs.promises.unlink(roomFile)
-      }
-    } catch (err) {
-      if (err.code !== 'ENOENT') {
-        console.error(`[${PLUGIN_NAME}] 删除游戏数据失败 (${groupId}):`, err)
-      }
-    } finally {
-      await lock.release()
-    }
-  }
-}
-
-class GameCleaner {
-    static cleanupTimers = new Map()
-    static CLEANUP_DELAY = 2 * 60 * 60 * 1000 // 2小时
-
-    static registerGame(groupId, instance) {
-      this.cleanupGame(groupId) // 先清理旧的计时器
-      const timer = setTimeout(async () => {
-        console.log(`[${PLUGIN_NAME}] 正在清理超时游戏 (${groupId})...`)
-        const gameData = await GameDataManager.load(groupId)
-        if (gameData && gameData.gameState.status !== 'ended') {
-          const fakeEvent = {
-            group_id: groupId,
-            user_id: gameData.gameState.hostUserId,
-            reply: (msg) => instance.sendSystemGroupMsg(groupId, `[自动清理] ${msg}`),
-            sender: { card: '系统', nickname: '系统' },
-            isMaster: true
-          }
-          await instance.forceEndGame(fakeEvent, true)
-        }
-        this.cleanupTimers.delete(groupId)
-      }, this.CLEANUP_DELAY)
-      this.cleanupTimers.set(groupId, timer)
-    }
-    static cleanupGame(groupId) { const timer = this.cleanupTimers.get(groupId); if (timer) { clearTimeout(timer); this.cleanupTimers.delete(groupId); } }
-    static cleanupAll() { for (const [, timer] of this.cleanupTimers) clearTimeout(timer); this.cleanupTimers.clear(); }
-}
-
-// --- 游戏核心逻辑类 (无改动) ---
-class WhoIsTheSpyGame {
-  constructor(initialData = {}) { this.players = initialData.players || []; this.gameState = initialData.gameState || { status: 'ended', hostUserId: null, isOpenIdentity: false, currentSpeakerIndex: 0, currentRound: 0, normalWord: '', spyWord: '', votes: {}, lastVoteTie: false, }; }
-  initGame(hostUserId, hostNickname, isOpenIdentity) { this.players = []; this.gameState = { status: 'waiting', hostUserId: hostUserId, isOpenIdentity: isOpenIdentity, currentSpeakerIndex: 0, currentRound: 0, normalWord: '', spyWord: '', votes: {}, lastVoteTie: false }; this.addPlayer(hostUserId, hostNickname); return { success: true, message: `游戏创建成功！模式：${isOpenIdentity ? '明牌' : '暗牌'}\n你是房主，发送 #加入卧底 参与。` }; }
-  addPlayer(userId, nickname) { if (this.players.some(p => p.userId === userId)) { return { success: false, message: '你已经加入游戏了。' }; } const player = { userId, nickname, isSpy: false, isAlive: true, tempId: String(this.players.length + 1).padStart(2, '0') }; this.players.push(player); return { success: true, message: `${nickname} (${player.tempId}号) 加入游戏。当前人数: ${this.players.length}` }; }
-  removePlayer(userId) { const playerIndex = this.players.findIndex(p => p.userId === userId); if (playerIndex === -1) { return { success: false, message: '你不在游戏中。' }; } if (this.gameState.status !== 'waiting') { return { success: false, message: '游戏已经开始，无法退出。' }; } const removedPlayer = this.players.splice(playerIndex, 1)[0]; if (removedPlayer.userId === this.gameState.hostUserId) { this.gameState.status = 'ended'; return { success: true, message: `房主 ${removedPlayer.nickname} 退出了，游戏解散。`, gameDissolved: true }; } this.players.forEach((p, i) => p.tempId = String(i + 1).padStart(2, '0')); return { success: true, message: `${removedPlayer.nickname} 退出游戏。当前人数: ${this.players.length}` }; }
-  prepareGame(wordPairs) { if (this.players.length < 3) { return { success: false, message: '游戏人数不足，至少需要3人才能开始。' }; } const spyIndex = Math.floor(Math.random() * this.players.length); this.players[spyIndex].isSpy = true; const [normalWord, spyWord] = wordPairs[Math.floor(Math.random() * wordPairs.length)]; this.gameState.normalWord = normalWord; this.gameState.spyWord = spyWord; this.gameState.status = 'playing'; this.gameState.currentRound = 1; return { success: true }; }
-  moveToNextSpeaker() { const activePlayers = this.players.filter(p => p.isAlive); if (this.gameState.currentSpeakerIndex >= activePlayers.length) { return null; } const nextSpeaker = activePlayers[this.gameState.currentSpeakerIndex]; this.gameState.currentSpeakerIndex++; return nextSpeaker; }
-  recordVote(voterUserId, targetTempId) { const voter = this.players.find(p => p.userId === voterUserId && p.isAlive); if (!voter) return { success: false, message: '你不在游戏中或已淘汰，无法投票。' }; if (this.gameState.votes[voter.userId]) return { success: false, message: '你已经投过票了。' }; const targetPlayer = this.players.find(p => p.tempId === targetTempId && p.isAlive); if (!targetPlayer) return { success: false, message: '投票目标无效。' }; if (voter.userId === targetPlayer.userId) return { success: false, message: '不能投票给自己。' }; this.gameState.votes[voter.userId] = targetTempId; return { success: true, message: `${voter.nickname} 投票给 ${targetPlayer.nickname} (${targetTempId}号)。` }; }
-  processVotes() { const voteCounts = {}; Object.values(this.gameState.votes).forEach(targetId => { voteCounts[targetId] = (voteCounts[targetId] || 0) + 1; }); let maxVotes = 0; let candidates = []; for (const tempId in voteCounts) { if (voteCounts[tempId] > maxVotes) { maxVotes = voteCounts[tempId]; candidates = [tempId]; } else if (voteCounts[tempId] === maxVotes && maxVotes > 0) { candidates.push(tempId); } } this.gameState.votes = {}; if (candidates.length === 0) { this.gameState.lastVoteTie = false; return { summary: '无人投票，无人出局。', eliminatedPlayer: null, gameStatus: this.checkGameStatus() }; } if (candidates.length > 1) { if (this.gameState.lastVoteTie) { this.gameState.lastVoteTie = false; return { summary: `再次平票 (${candidates.join(', ')}号)，无人出局。`, eliminatedPlayer: null, gameStatus: this.checkGameStatus() }; } else { this.gameState.lastVoteTie = true; return { summary: `平票！(${candidates.join(', ')}号)。本轮无人出局。`, eliminatedPlayer: null, gameStatus: this.checkGameStatus() }; } } this.gameState.lastVoteTie = false; const eliminatedId = candidates[0]; const eliminatedPlayer = this.players.find(p => p.tempId === eliminatedId); eliminatedPlayer.isAlive = false; return { summary: `${eliminatedPlayer.nickname} (${eliminatedPlayer.tempId}号) 被投票出局。`, eliminatedPlayer, gameStatus: this.checkGameStatus() }; }
-  checkGameStatus() { const alivePlayers = this.players.filter(p => p.isAlive); const spiesAlive = alivePlayers.filter(p => p.isSpy).length; const civiliansAlive = alivePlayers.length - spiesAlive; if (spiesAlive === 0) return { isEnd: true, winner: '平民' }; if (civiliansAlive <= spiesAlive) return { isEnd: true, winner: '卧底' }; return { isEnd: false, winner: null }; }
-  getGameData() { return { players: this.players, gameState: this.gameState }; }
-  getFinalRoles() { const spy = this.players.find(p => p.isSpy); return [`卧底是：${spy?.nickname || '??'} (${spy?.tempId || '??'}号)`, `卧底词：${this.gameState.spyWord}`, `平民词：${this.gameState.normalWord}`].join('\n'); }
-  getAlivePlayerList() { return this.players.filter(p => p.isAlive).map(p => `${p.tempId}号: ${p.nickname}`).join('\n'); }
-}
-
-// --- 3. Yunzai 插件类 (作为控制器) ---
-export class WhoIsTheSpy extends plugin {
+export class undercover extends plugin {
   constructor() {
     super({
-      name: PLUGIN_NAME,
+      name: '谁是卧底',
       dsc: '谁是卧底游戏',
       event: 'message',
       priority: 500,
       rule: [
-        { reg: '^#卧底创建\\s*(明牌|暗牌)?$', fnc: 'createGame' },
-        { reg: '^#加入卧底$', fnc: 'joinGame' },
-        { reg: '^#退出卧底$', fnc: 'leaveGame' },
-        { reg: '^#开始卧底$', fnc: 'startGame' },
-        { reg: '^#(结束发言|发言结束)$', fnc: 'endSpeech' },
-        { reg: '^#投票\\s*(\\d+)$', fnc: 'vote' },
-        { reg: '^#结束卧底$', fnc: 'forceEndGame' },
-        { reg: '^#卧底状态$', fnc: 'showGameStatus' },
+        { reg: /^#卧底创建(\s*(明牌|暗牌))?$/, fnc: 'createGame' },
+        { reg: /^#加入卧底$/, fnc: 'joinGame' },
+        { reg: /^#退出卧底$/, fnc: 'quitGame' },
+        { reg: /^#开始卧底$/, fnc: 'startGame' },
+        { reg: /^(#结束发言|#发言结束)$/, fnc: 'endTurn' },
+        { reg: /^#投票\s*(\d+)$/, fnc: 'votePlayer' },
+        { reg: /^#结束卧底$/, fnc: 'endGame' }
       ]
-    })
-
-    const __filename = fileURLToPath(import.meta.url)
-    const __dirname = dirname(__filename)
-    // 假设资源在插件的 resource 目录下
-    this.wordPairs = JSON.parse(fs.readFileSync(path.join(__dirname, '../resource/word_pairs.json'),'utf8'))
-    
-    this.gameInstances = new Map()
-    this.actionTimeouts = new Map()
-    this.SPEECH_TIMEOUT = 30 * 1000 // 30秒发言
-    this.VOTE_TIMEOUT = 60 * 1000 // 60秒投票
-
-    process.on('exit', () => this.cleanup())
+    });
   }
 
-  // --- 核心游戏管理 ---
-  async getGameInstance(groupId, createIfNotExist = false) {
-    let game = this.gameInstances.get(groupId)
-    if (!game) {
-      const gameData = await GameDataManager.load(groupId)
-      if (gameData) {
-        // BUG修复：如果从磁盘加载的游戏状态已经是 'ended'，则不应该加载它，直接返回null
-        if (gameData.gameState.status === 'ended') {
-            await GameDataManager.delete(groupId); // 清理掉这个无用的结束文件
-            return null;
+  // --- 计时器与核心逻辑辅助函数 ---
+
+  clearTimer(room) {
+    if (room && room.timerId) {
+      clearTimeout(room.timerId);
+      room.timerId = null;
+    }
+  }
+  
+  async nextTurnOrVote(e, room, markPreviousAsSpoken = true) {
+    this.clearTimer(room);
+
+    if (markPreviousAsSpoken) {
+      const lastPlayer = room.players[room.currentPlayerIndex];
+      if (lastPlayer && lastPlayer.isAlive) {
+        lastPlayer.hasSpoken = true;
+      }
+    }
+
+    let nextPlayerIndex = -1;
+    for (let i = 1; i <= room.players.length; i++) {
+      const checkIndex = (room.currentPlayerIndex + i) % room.players.length;
+      const player = room.players[checkIndex];
+      if (player.isAlive && !player.hasSpoken) {
+        nextPlayerIndex = checkIndex;
+        break;
+      }
+    }
+    
+    if (nextPlayerIndex === -1) {
+        const self = room.players[room.currentPlayerIndex];
+        if (self.isAlive && !self.hasSpoken) {
+            nextPlayerIndex = room.currentPlayerIndex;
         }
-        game = new WhoIsTheSpyGame(gameData)
-        this.gameInstances.set(groupId, game)
-        GameCleaner.registerGame(groupId, this)
-      } else if (createIfNotExist) {
-        game = new WhoIsTheSpyGame()
-        this.gameInstances.set(groupId, game)
+    }
+
+    if (nextPlayerIndex !== -1) {
+      room.currentPlayerIndex = nextPlayerIndex;
+      const nextPlayer = room.players[nextPlayerIndex];
+      const playerNumber = (nextPlayerIndex + 1).toString().padStart(2, '0');
+      
+      await e.reply([
+        `💡 Spotlight on... 【${playerNumber}】号玩家 ${nextPlayer.name}！\n\n`,
+        `请开始你的描述，时间为 ${SPEAKING_TIMEOUT / 1000} 秒。\n`,
+        '（发言完毕后，请发送 #结束发言）'
+      ]);
+
+      room.timerId = setTimeout(() => {
+        const currentRoom = this.getRoom(e.group_id);
+        if (currentRoom && currentRoom.status === 'speaking' && currentRoom.currentPlayerIndex === nextPlayerIndex) {
+          e.reply(`⏰ 玩家【${nextPlayer.name}】发言超时，自动进入下一位。`);
+          this.nextTurnOrVote(e, currentRoom);
+        }
+      }, SPEAKING_TIMEOUT);
+    } else {
+      await this.startVoting(e, room);
+    }
+  }
+  
+  async startVoting(e, room) {
+    this.clearTimer(room);
+    room.status = 'voting';
+    room.votes = {};
+    let voteMsg = '🗣️ 所有玩家陈述完毕，投票环节到！\n\n';
+    voteMsg += this.getPlayerList(room);
+    voteMsg += `\n\n投出你心中最可疑的那个人吧！\n`;
+    voteMsg += `➡️ 请在 ${VOTING_TIMEOUT / 1000} 秒内发送【#投票 编号】\n（例如：#投票 01）`;
+    await e.reply(voteMsg);
+
+    room.timerId = setTimeout(() => {
+      const currentRoom = this.getRoom(e.group_id);
+      if (currentRoom && currentRoom.status === 'voting') {
+        e.reply('⏰ 投票时间到！现在开始统计票数...');
+        this.tallyVotes(e, currentRoom);
+      }
+    }, VOTING_TIMEOUT);
+  }
+
+  async tallyVotes(e, room) {
+    this.clearTimer(room);
+
+    const voteCounts = {};
+    Object.values(room.votes).forEach(votedId => {
+      voteCounts[votedId] = (voteCounts[votedId] || 0) + 1;
+    });
+
+    let maxVotes = 0;
+    let eliminatedPlayerId = null;
+    let isTie = false;
+
+    for (const playerId in voteCounts) {
+      if (voteCounts[playerId] > maxVotes) {
+        maxVotes = voteCounts[playerId];
+        eliminatedPlayerId = playerId;
+        isTie = false;
+      } else if (voteCounts[playerId] === maxVotes) {
+        isTie = true;
       }
     }
-    return game
-  }
+    
+    let voteResultMsg = '【本轮投票结果】\n';
+    const votedPlayers = room.players.filter(p => voteCounts[p.id] > 0);
+    if(votedPlayers.length > 0) {
+      votedPlayers.forEach(p => {
+        voteResultMsg += `${p.name}: ${voteCounts[p.id]}票\n`;
+      });
+    } else {
+      voteResultMsg += '无人投票。\n'
+    }
 
-  async saveGame(groupId, game) {
-    if (game) {
-      await GameDataManager.save(groupId, game.getGameData());
-      GameCleaner.registerGame(groupId, this);
+    if (isTie && eliminatedPlayerId !== null) {
+      await e.reply(voteResultMsg + '\n出现了平票！暂时无人出局，危机解除...了吗？游戏继续！');
+      await this.startNextRound(e, room);
+    } else if (eliminatedPlayerId) {
+      const eliminatedPlayer = room.players.find(p => p.id === Number(eliminatedPlayerId));
+      eliminatedPlayer.isAlive = false;
+      
+      await e.reply(`${voteResultMsg}\n大家的手指向了同一个人... 惨遭淘汰的是【${eliminatedPlayer.name}】！\n\n他的真实身份是...【${eliminatedPlayer.role}】！词语是【${eliminatedPlayer.word}】。`);
+      
+      if (!await this.checkWinCondition(e, room)) {
+        await this.startNextRound(e, room);
+      }
+    } else {
+      await e.reply(voteResultMsg + '\n没有人获得足够票数，本轮安全度过！游戏继续！');
+      await this.startNextRound(e, room);
     }
   }
+  
+  async startNextRound(e, room) {
+    room.status = 'speaking';
+    room.players.forEach(p => p.hasSpoken = false);
 
-  async deleteGame(groupId) {
-    this.clearActionTimeout(groupId)
-    GameCleaner.cleanupGame(groupId)
-    this.gameInstances.delete(groupId)
-    await GameDataManager.delete(groupId)
+    let nextPlayerFound = false;
+    let startIndex = room.currentPlayerIndex;
+    for(let i=0; i<room.players.length; i++) {
+        let checkIndex = (startIndex + i) % room.players.length;
+        if(room.players[checkIndex].isAlive) {
+            room.currentPlayerIndex = checkIndex;
+            nextPlayerFound = true;
+            break;
+        }
+    }
+
+    if(!nextPlayerFound) { 
+      await this.checkWinCondition(e, room);
+      return;
+    }
+
+    await e.reply('新一轮开始！请准备发言！');
+    await this.nextTurnOrVote(e, room, false);
+  }
+  
+  getUndercoverCount(playerCount) {
+    if (playerCount <= 5) return 1;
+    if (playerCount <= 9) return 2;
+    if (playerCount <= 13) return 3;
+    if (playerCount <= 16) return 4;
+    return Math.floor(playerCount / 4);
   }
 
-  // --- 用户指令处理 ---
+  getRoom(groupId) { return gameRooms[groupId]; }
+  
+  getPlayerList(room) { 
+    let msg = '【当前玩家】\n';
+    room.players.forEach((p, index) => {
+      const number = (index + 1).toString().padStart(2, '0');
+      msg += `${number}. ${p.isAlive ? '🙂' : '💀'}${p.name}\n`;
+    });
+    msg += `\n总人数：${room.players.length}人`;
+    return msg.trim();
+  }
+
+  async checkWinCondition(e, room) { 
+    const alivePlayers = room.players.filter(p => p.isAlive);
+    const aliveCivilians = alivePlayers.filter(p => p.role === '平民');
+    const aliveUndercovers = alivePlayers.filter(p => p.role === '卧底');
+    let isGameOver = false;
+    let winMsg = '';
+    if (aliveUndercovers.length === 0) {
+      isGameOver = true;
+      winMsg = '所有卧底都已被揪出，平民获得了最终胜利！';
+    } else if (aliveUndercovers.length >= aliveCivilians.length) {
+      isGameOver = true;
+      winMsg = '卧底们技高一筹，成功潜伏到了最后！卧底阵营胜利！';
+    } else if (alivePlayers.length <= 2 && aliveUndercovers.length > 0) {
+        isGameOver = true;
+        winMsg = '场上仅剩2人，游戏无法结束，卧底阵营胜利！';
+    }
+    if (isGameOver) {
+      this.clearTimer(room);
+      let finalReveal = '【游戏结束 - 身份揭晓】\n';
+      room.players.forEach(p => {
+        finalReveal += `${p.name}: [${p.role}] - ${p.word}\n`;
+      });
+      await e.reply(`${winMsg}\n\n${finalReveal}`);
+      delete gameRooms[e.group_id];
+      return true;
+    }
+    return false;
+  }
+  
+  // --- 指令功能 ---
+
   async createGame(e) {
-    const groupId = e.group_id
-    let game = await this.getGameInstance(groupId)
-    if (game && game.gameState.status !== 'ended') return e.reply('本群已有进行中的游戏。')
-    
-    game = await this.getGameInstance(groupId, true)
-    const isOpenIdentity = /明牌$/.test(e.msg)
-    const result = game.initGame(e.user_id, e.sender.card || e.sender.nickname, isOpenIdentity)
-    
-    await this.saveGame(groupId, game)
-    return e.reply(result.message, true)
-  }
-
-  async joinGame(e) {
-    const groupId = e.group_id
-    const game = await this.getGameInstance(groupId)
-    if (!game || game.gameState.status !== 'waiting') return e.reply('当前没有等待加入的游戏。')
-
-    const result = game.addPlayer(e.user_id, e.sender.card || e.sender.nickname)
-    if (result.success) await this.saveGame(groupId, game)
-    return e.reply(result.message, false)
-  }
-
-  async leaveGame(e) {
-    const groupId = e.group_id
-    const game = await this.getGameInstance(groupId)
-    if (!game) return e.reply('本群当前没有游戏。')
-
-    const result = game.removePlayer(e.user_id)
-    if (result.success) {
-      if (result.gameDissolved) {
-        await this.deleteGame(groupId);
-      } else {
-        await this.saveGame(groupId, game);
-      }
+    if (this.getRoom(e.group_id)) {
+      return e.reply('本群已经有一场游戏啦，请勿重复创建哦。');
     }
-    return e.reply(result.message, false)
+    const mode = e.msg.includes('明牌') ? '明牌' : '暗牌';
+    const room = {
+      ownerId: e.user_id, status: 'waiting', mode: mode, players: [],
+      wordPair: [], civilianWord: '', undercoverWord: '',
+      currentPlayerIndex: 0, votes: {}, timerId: null
+    };
+    gameRooms[e.group_id] = room;
+    room.players.push({ id: e.user_id, name: e.sender.card || e.sender.nickname, role: null, word: null, isAlive: true, hasSpoken: false });
+    room.timerId = setTimeout(() => {
+        if (this.getRoom(e.group_id) && this.getRoom(e.group_id).status === 'waiting') {
+            delete gameRooms[e.group_id];
+            e.reply(`[谁是卧底] 房间因长时间无人开始，已自动解散了哦~`);
+        }
+    }, WAITING_TIMEOUT);
+    return e.reply(
+      `「谁是卧底」游戏房间已开启！\n\n` +
+      `游戏模式：【${mode}】\n` +
+      `本局房主：${e.sender.card || e.sender.nickname}\n\n` +
+      `发送【#加入卧底】加入卧底游戏！\n` +
+      `房主可以发送【#开始卧底】开始游戏\n\n` +
+      `（房间将在${WAITING_TIMEOUT / 60 / 1000}分钟后自动解散）`
+    );
+  }
+  
+  async joinGame(e) { 
+    const room = this.getRoom(e.group_id);
+    if (!room || room.status !== 'waiting') return e.reply('现在没有可以加入的游戏。');
+    if (room.players.find(p => p.id === e.user_id)) return e.reply('你已经加入，请勿重复加入！');
+    room.players.push({ id: e.user_id, name: e.sender.card || e.sender.nickname, role: null, word: null, isAlive: true, hasSpoken: false });
+    return e.reply([`欢迎玩家【${e.sender.card || e.sender.nickname}】加入对局！🎉\n\n`, this.getPlayerList(room)]);
+  }
+
+  async quitGame(e) { 
+    const room = this.getRoom(e.group_id);
+    if (!room || room.status !== 'waiting') return e.reply('游戏已经开始，不能中途跑路');
+    if (e.user_id === room.ownerId) {
+      this.clearTimer(room);
+      delete gameRooms[e.group_id];
+      return e.reply('啊哦，房主跑路啦！本轮游戏已解散~ 🤷');
+    }
+    const playerIndex = room.players.findIndex(p => p.id === e.user_id);
+    if (playerIndex === -1) return e.reply('你都不在游戏里，怎么退出？');
+    const playerName = room.players[playerIndex].name;
+    room.players.splice(playerIndex, 1);
+    return e.reply([`玩家【${playerName}】挥手告别，离开了游戏~ 👋\n\n`, this.getPlayerList(room)]);
   }
 
   async startGame(e) {
-    const groupId = e.group_id
-    const game = await this.getGameInstance(groupId)
-    if (!game || game.gameState.hostUserId !== e.user_id) return e.reply('只有房主才能开始游戏。')
-    if (game.gameState.status !== 'waiting') return e.reply('游戏状态不正确。')
+    const room = this.getRoom(e.group_id);
+    if (!room || room.status !== 'waiting') return e.reply('游戏已经开始了，请勿重复操作。');
+    if (e.user_id !== room.ownerId) return e.reply('只有房主才能启动游戏哦！');
+    if (room.players.length < 3) return e.reply('还不够人，至少要3个才能开始。');
 
-    const prepareResult = game.prepareGame(this.wordPairs)
-    if (!prepareResult.success) return e.reply(prepareResult.message)
-
-    await e.reply("游戏开始！正在私聊发送身份词语...")
+    this.clearTimer(room);
+    room.status = 'speaking';
+    if (wordPairs.length === 0) return e.reply('糟糕，词库空空如也，游戏无法开始！请联系管理员。');
     
-    let allSent = true
-    for (const p of game.players) {
-        const word = p.isSpy ? game.gameState.spyWord : game.gameState.normalWord
-        let message = `你的词语是：【${word}】\n你的编号是：【${p.tempId}】`
-        if (game.gameState.isOpenIdentity) {
-            message = `你的身份是：【${p.isSpy ? '卧底' : '平民'}】\n` + message
+    const pairIndex = Math.floor(Math.random() * wordPairs.length);
+    [room.civilianWord, room.undercoverWord] = Math.random() > 0.5 ? wordPairs[pairIndex] : [wordPairs[pairIndex][1], wordPairs[pairIndex][0]];
+    
+    const undercoverCount = this.getUndercoverCount(room.players.length);
+    room.players.sort(() => Math.random() - 0.5); 
+
+    room.players.forEach((player, index) => {
+      if (index < undercoverCount) {
+        player.role = '卧底';
+        player.word = room.undercoverWord;
+      } else {
+        player.role = '平民';
+        player.word = room.civilianWord;
+      }
+    });
+
+    let startMsg = `🏁 游戏正式开始！\n\n🔍 本局共有 ${undercoverCount} 名卧底，他们就藏在你们之中...\n\n${this.getPlayerList(room)}\n\n🤫 正在悄悄给每位玩家发送ta的秘密词语，请查收私信...`;
+    await e.reply(startMsg);
+
+    for (const player of room.players) {
+        try {
+            let privateContent = '';
+            if (room.mode === '明牌') {
+                privateContent = `你的身份是：${player.role}\n你的词语是：【${player.word}】`;
+            } else {
+                privateContent = `你的词语是：【${player.word}】`;
+            }
+            await Bot.pickUser(player.id).sendMsg(`\n\n${privateContent}\n\n记住你的词语，不要暴露哦！`);
+        } catch (err) {
+            logger.error(`[谁是卧底] 发送私聊给 ${player.name}(${player.id}) 失败:`, err);
+            await e.reply(`@${player.name} 私信发送失败！请检查好友关系或临时会话设置。`);
         }
-        const sent = await this.sendDirectMessage(p.userId, message, groupId)
-        if (!sent) allSent = false
     }
     
-    if (!allSent) {
-      await this.sendSystemGroupMsg(groupId, "部分玩家私聊发送失败，游戏已自动结束。")
-      await this.deleteGame(groupId)
-      return true
+    await e.reply('词语已派发完毕！\n现在，请开始你的表演... 🎤');
+    
+    const firstPlayerIndex = room.players.findIndex(p => p.isAlive);
+    if(firstPlayerIndex !== -1) {
+        room.currentPlayerIndex = firstPlayerIndex;
     }
     
-    await this.saveGame(groupId, game)
-    await this.startSpeakingRoundFlow(groupId, game)
+    await this.nextTurnOrVote(e, room, false);
   }
 
-  async endSpeech(e) {
-    const groupId = e.group_id
-    const game = await this.getGameInstance(groupId)
-    if (!game || game.gameState.status !== 'playing') return
+  async endTurn(e) {
+    const room = this.getRoom(e.group_id);
+    if (!room || room.status !== 'speaking') return;
     
-    const activePlayers = game.players.filter(p => p.isAlive)
-    const currentSpeakerIndex = game.gameState.currentSpeakerIndex - 1
-    if (currentSpeakerIndex < 0 || currentSpeakerIndex >= activePlayers.length) return
-
-    if (activePlayers[currentSpeakerIndex].userId !== e.user_id) {
-        return e.reply('现在不是你的发言时间。', true)
-    }
-
-    this.clearActionTimeout(groupId) 
+    const currentPlayer = room.players[room.currentPlayerIndex];
+    if (e.user_id !== currentPlayer.id) return e.reply('还没轮到你发言，不要抢麦哦~');
     
-    await this.sendSystemGroupMsg(groupId, `${e.sender.card || e.sender.nickname} 结束发言。`)
-    await this.processNextSpeaker(groupId)
+    await e.reply(`👌 玩家【${currentPlayer.name}】发言完毕，麦克风传给下一位~`);
+    await this.nextTurnOrVote(e, room);
   }
 
-  async vote(e) {
-    const groupId = e.group_id
-    const game = await this.getGameInstance(groupId)
-    if (!game || game.gameState.status !== 'voting') return e.reply('当前不是投票时间。')
-
-    const targetTempId = e.msg.match(/\d+/)?.[0].padStart(2, '0')
-    const result = game.recordVote(e.user_id, targetTempId)
-    
-    if (result.success) {
-      await e.reply(result.message, true)
-      await this.saveGame(groupId, game)
-
-      const activePlayerCount = game.players.filter(p => p.isAlive).length
-      if (Object.keys(game.gameState.votes).length === activePlayerCount) {
-          this.clearActionTimeout(groupId)
-          await this.processVoteEnd(groupId)
-      }
-    } else {
-      await e.reply(result.message, true)
+  async votePlayer(e) { 
+    const room = this.getRoom(e.group_id);
+    if (!room || room.status !== 'voting') return;
+    const voter = room.players.find(p => p.id === e.user_id);
+    if (!voter || !voter.isAlive) return e.reply('你已经出局或不是玩家，不能投票啦~');
+    if (room.votes[e.user_id]) return e.reply('每人一票，你已经投过啦！');
+    const votedNumber = parseInt(e.msg.match(/^#投票\s*(\d+)/)[1]);
+    if (isNaN(votedNumber) || votedNumber < 1 || votedNumber > room.players.length) return e.reply('请输入有效的玩家编号哦！');
+    const votedPlayer = room.players[votedNumber - 1];
+    if (!votedPlayer.isAlive) return e.reply('这位玩家已经出局了，放过ta吧~');
+    if (votedPlayer.id === e.user_id) return e.reply('不可以投自己哦，要相信自己是好人！');
+    room.votes[e.user_id] = votedPlayer.id;
+    await e.reply(`【${voter.name}】将他宝贵的一票投给了【${votedPlayer.name}】。`);
+    const alivePlayersCount = room.players.filter(p => p.isAlive).length;
+    if (Object.keys(room.votes).length >= alivePlayersCount) {
+        await e.reply('所有在线玩家已投票完毕，马上揭晓结果！');
+        await this.tallyVotes(e, room);
     }
   }
 
-  async forceEndGame(e, isAutoCleanup = false) {
-    const groupId = e.group_id
-    const game = await this.getGameInstance(groupId)
-    //增加对游戏是否已结束状态的判断，防止重复结束
-    if (!game || game.gameState.status === 'ended') {
-        return isAutoCleanup ? null : e.reply('本群没有进行中的游戏。')
+  async endGame(e) { 
+    const room = this.getRoom(e.group_id);
+    if (!room) return e.reply('当前没有游戏在进行哦。');
+    if (e.user_id !== room.ownerId) return e.reply('只有房主才能强制结束游戏！');
+    this.clearTimer(room);
+    let finalReveal = '';
+    if (room.status !== 'waiting') {
+        finalReveal = '\n【身份揭晓】\n';
+        room.players.forEach(p => { finalReveal += `${p.name}: [${p.role}] - ${p.word}\n`; });
     }
-    
-    const canEnd = isAutoCleanup || e.isMaster || game.gameState.hostUserId === e.user_id
-    if (!canEnd) return e.reply('只有房主或机器人主人才能结束游戏。')
-    
-    //立即清除计时器，防止在发送消息的等待期间，旧的计时器触发导致游戏继续。
-    this.clearActionTimeout(groupId)
-    // 并且在内存中立即标记游戏结束
-    game.gameState.status = 'ended'
-
-    await this.sendSystemGroupMsg(groupId, `游戏已被 ${(e.sender.card || e.sender.nickname)} 强制结束。`)
-    if (game.gameState.status !== 'waiting') { // 此处状态已经是 'ended' 了
-        await this.sendSystemGroupMsg(groupId, "公布身份：\n" + game.getFinalRoles())
-    }
-    await this.deleteGame(groupId)
-    return true
-  }
-
-  async showGameStatus(e) {
-    const groupId = e.group_id
-    const game = await this.getGameInstance(groupId)
-    if (!game || game.gameState.status === 'ended') return e.reply('本群没有进行中的游戏。')
-
-    let statusMsg = `--- ${PLUGIN_NAME} 游戏状态 ---\n`
-    statusMsg += `模式: ${game.gameState.isOpenIdentity ? '明牌' : '暗牌'}\n`
-    statusMsg += `状态: ${this.getChineseStatus(game.gameState.status)}\n` // 优化：显示中文状态
-    statusMsg += `回合: ${game.gameState.currentRound}\n`
-    statusMsg += `存活玩家 (${game.players.filter(p => p.isAlive).length}/${game.players.length}):\n`
-    statusMsg += game.getAlivePlayerList()
-    return e.reply(statusMsg, true)
-  }
-
-  // --- 游戏流程与计时器 ---
-  setActionTimeout(groupId, type, duration) {
-    this.clearActionTimeout(groupId)
-
-    const timeoutId = setTimeout(async () => {
-      //此处重新获取游戏实例，以确保状态是最新的
-      const game = await this.getGameInstance(groupId)
-      if (!game || game.gameState.status === 'ended') {
-        this.actionTimeouts.delete(groupId)
-        return
-      }
-      
-      let expectedStatus;
-      switch (type) {
-        case 'speech': expectedStatus = 'playing'; break;
-        case 'vote': expectedStatus = 'voting'; break;
-        default: return;
-      }
-
-      if (game.gameState.status !== expectedStatus) {
-        this.actionTimeouts.delete(groupId)
-        return
-      }
-      
-      switch (type) {
-        case 'speech':
-            // BUG修复：此处不再显示 "自动进入下一位"，因为这可能是BUG 3的来源之一，让流程函数自己发消息。
-            await this.processNextSpeaker(groupId, true) // 传入超时标记
-            break
-        case 'vote':
-            await this.sendSystemGroupMsg(groupId, "投票时间到，开始计票。")
-            await this.processVoteEnd(groupId)
-            break
-      }
-    }, duration)
-
-    this.actionTimeouts.set(groupId, { type, timeoutId })
-  }
-
-  clearActionTimeout(groupId) {
-    const timeoutInfo = this.actionTimeouts.get(groupId)
-    if (timeoutInfo) {
-      clearTimeout(timeoutInfo.timeoutId)
-    }
-    this.actionTimeouts.delete(groupId)
-  }
-
-  async startSpeakingRoundFlow(groupId, game) {
-    game.gameState.status = 'playing'
-    game.gameState.currentSpeakerIndex = 0
-    await this.saveGame(groupId, game)
-
-    await this.sendSystemGroupMsg(groupId, `--- 第 ${game.gameState.currentRound} 轮发言开始 ---`)
-    await this.processNextSpeaker(groupId, false) // 初始调用，非超时
-  }
-
-  async processNextSpeaker(groupId, fromTimeout = false) {
-    const game = await this.getGameInstance(groupId);
-    if (!game || game.gameState.status !== 'playing') return;
-
-    if (fromTimeout) {
-        // 仅在由超时触发时发送此消息
-        await this.sendSystemGroupMsg(groupId, "发言时间到，自动进入下一位。");
-    }
-
-    const nextSpeaker = game.moveToNextSpeaker();
-
-    if (nextSpeaker) {
-        await this.saveGame(groupId, game);
-        const msg = [segment.at(nextSpeaker.userId), ` 请开始发言 (${this.SPEECH_TIMEOUT / 1000}秒)。发言完毕请说“结束发言”。`];
-        await this.sendSystemGroupMsg(groupId, msg);
-        this.setActionTimeout(groupId, 'speech', this.SPEECH_TIMEOUT);
-    } else {
-        this.clearActionTimeout(groupId); // 清理最后一个发言者的计时器
-        await this.sendSystemGroupMsg(groupId, "所有玩家发言完毕，进入投票阶段。");
-        await this.startVotingFlow(groupId, game);
-    }
-  }
-
-  async startVotingFlow(groupId, game) {
-    game.gameState.status = 'voting';
-    game.gameState.votes = {}; // 重置投票记录
-    await this.saveGame(groupId, game);
-
-    const alivePlayerList = game.getAlivePlayerList();
-    const msg = `现在开始投票，请选择你要投出的人。\n发送 #投票 [编号]\n你有 ${this.VOTE_TIMEOUT / 1000} 秒时间。\n存活玩家列表：\n${alivePlayerList}`;
-    await this.sendSystemGroupMsg(groupId, msg);
-
-    this.setActionTimeout(groupId, 'vote', this.VOTE_TIMEOUT);
-  }
-
-  async processVoteEnd(groupId) {
-    const game = await this.getGameInstance(groupId);
-    if (!game || game.gameState.status !== 'voting') return;
-
-    const result = game.processVotes();
-    await this.sendSystemGroupMsg(groupId, result.summary);
-    
-    // BUG修复：在宣布出局后，立即检查游戏是否结束
-    const { isEnd, winner } = result.gameStatus;
-    if (isEnd) {
-      await this.endGameFlow(groupId, game, winner);
-    } else {
-      // 游戏未结束，状态更新并进入下一轮
-      game.gameState.currentRound++;
-      await this.saveGame(groupId, game); // 保存新回合的状态
-      await this.startSpeakingRoundFlow(groupId, game);
-    }
-  }
-
-  async endGameFlow(groupId, game, winner) {
-    //立即清除计时器并设置状态
-    this.clearActionTimeout(groupId);
-    game.gameState.status = 'ended';
-    
-    await this.sendSystemGroupMsg(groupId, `游戏结束！${winner} 阵营获胜！\n` + game.getFinalRoles());
-    
-    // 游戏结束后，彻底删除游戏数据。
-    await this.deleteGame(groupId);
-  }
-
-  // --- 辅助函数 ---
-  getChineseStatus(status) {
-    const map = {
-        'waiting': '等待中',
-        'playing': '发言中',
-        'voting': '投票中',
-        'ended': '已结束'
-    };
-    return map[status] || '未知';
-  }
-
-  async sendSystemGroupMsg(groupId, msg) {
-    if (!groupId || !msg) return
-    try { await Bot.pickGroup(groupId).sendMsg(msg) } 
-    catch (err) { console.error(`[${PLUGIN_NAME}] 发送系统群消息失败 (${groupId}):`, err) }
-  }
-
-  async sendDirectMessage(userId, msg, sourceGroupId) {
-    if (!userId || !msg) return false
-    try {
-      await Bot.pickUser(userId).sendMsg(msg)
-      return true
-    } catch (err) {
-      console.error(`[${PLUGIN_NAME}] 发送私聊消息失败 (userId: ${userId}):`, err)
-      if (sourceGroupId) {
-        await this.sendSystemGroupMsg(sourceGroupId, `[!] 无法向玩家 QQ:${userId} 发送私聊消息，请检查好友关系或机器人是否被屏蔽。`)
-      }
-      return false
-    }
-  }
-
-  cleanup() {
-    console.log(`[${PLUGIN_NAME}] 正在清理插件资源...`)
-    GameCleaner.cleanupAll()
-    for (const groupId of this.actionTimeouts.keys()) {
-        this.clearActionTimeout(groupId)
-    }
+    delete gameRooms[e.group_id];
+    return e.reply(`游戏被房主强制结束啦，期待下次再战！${finalReveal}`);
   }
 }
