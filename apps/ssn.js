@@ -326,6 +326,8 @@ export class undercover extends plugin {
       }
     });
 
+    room.players.sort(() => Math.random() - 0.5); 
+
     let startMsg = `🏁 游戏正式开始！\n\n🔍 本局共有 ${undercoverCount} 名卧底，他们就藏在你们之中...\n\n${this.getPlayerList(room)}\n\n🤫 正在悄悄给每位玩家发送ta的秘密词语，请查收私信...`;
     await e.reply(startMsg);
 
