@@ -12,7 +12,7 @@ const LYRIC_ROOT = path.join(PLUGIN_ROOT, 'data', 'lyrics');
 const COMMON_LYRICS_DIR = path.join(LYRIC_ROOT, 'common_lyrics');
 const TEMP_DIR = path.join(PLUGIN_ROOT, 'data', 'temp');
 const LYRICS_DATA_CONFIG_PATH = path.join(LYRIC_ROOT, 'config.json'); // 修改：之前叫CONFIG_PATH，现在更明确是lyrics模块的数据配置
-const PLUGIN_MASTER_CONFIG_PATH = path.join(PLUGIN_ROOT, 'config.yaml'); // 新增：统一配置文件路径
+const PLUGIN_MASTER_CONFIG_PATH = path.join(PLUGIN_ROOT, 'config', 'config.yaml'); // 新增：统一配置文件路径
 
 // 确保目录存在
 function ensureDirectoriesExist(directories) {
