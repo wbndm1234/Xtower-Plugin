@@ -66,7 +66,7 @@ export class undercover extends plugin {
     }
 
     let nextPlayerIndex = -1;
-    for (let i = 1; i <= room.players.length; i++) {
+    for (let i = 0; i <= room.players.length; i++) {
       const checkIndex = (room.currentPlayerIndex + i) % room.players.length;
       const player = room.players[checkIndex];
       if (player.isAlive && !player.hasSpoken) {
