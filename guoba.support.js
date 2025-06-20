@@ -1,17 +1,15 @@
 import path from 'path'
-import fs from 'fs' // 引入 Node.js 文件系统模块
-import yaml from 'js-yaml' // 引入 js-yaml 库
+import fs from 'fs'
+import yaml from 'js-yaml'
 import lodash from 'lodash'
 
-// 插件名称，应与你的插件文件夹名称一致
-const pluginName = 'xtower-tlugin' // 与 package.json 中的 name 或插件文件夹名一致
+// 插件名称
+const pluginName = 'Xtower-Plugin'
 
 // 插件配置文件的路径
-// 修改此处以匹配你的文件结构： plugins/Xtower-Plugin/config/config.yaml
 const pluginConfigPath = path.join(process.cwd(), 'plugins', pluginName, 'config', 'config.yaml');
 
 // 默认配置，当插件首次加载或配置不存在时使用
-// 新增了 initial_foresights 和 initial_skips
 const defaultConfig = {
   lyrics: {
     rateLimit: {
@@ -26,8 +24,8 @@ const defaultConfig = {
   },
   russianRoulette: {
     initial_spins: 4,
-    initial_foresights: 1, // 新增：初始预知次数
-    initial_skips: 1, // 新增：初始跳过次数
+    initial_foresights: 1,
+    initial_skips: 1,
     default_bullet_count: 1,
     auto_start_delay_ms: 30000,
     cylinder_capacity: 6
@@ -238,7 +236,7 @@ export function supportGuoba () {
             return Result.error('创建配置目录失败，无法保存！')
           }
           fs.writeFileSync(pluginConfigPath, yaml.dump(newConfig), 'utf8')
-          return Result.ok({}, '配置保存成功~')
+          return Result.ok({}, '配置保存成功awa~')
         } catch (error) {
           console.error(`[${pluginName}] Failed to write config file ${pluginConfigPath}:`, error)
           return Result.error('配置保存失败，请检查控制台日志！')
